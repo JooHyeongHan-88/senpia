@@ -1,12 +1,24 @@
+import asyncio
 import sys
 
-from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 
 import browser
 import updater
 from _version import __version__
-from config import ALLOWED_ORIGIN
+from chat import harness
+from chat.models import ChatRequest, ConversationResponse
+from chat.store import ConversationStore
+from chat.tools import registry
+from config import (
+    ALLOWED_ORIGIN,
+    MAX_AGENT_ITERATIONS,
+    MAX_HISTORY_MESSAGES,
+    PRESENCE_KEEPALIVE_INTERVAL,
+    PRESENCE_RETRY_HINT_MS,
+    SYSTEM_PROMPT,
+)
 
 
 def require_local_origin(
@@ -31,43 +43,88 @@ def require_local_origin(
 
 router = APIRouter(prefix="/api", dependencies=[Depends(require_local_origin)])
 
-
-class ChatRequest(BaseModel):
-    message: str
-
-
-class ClientRequest(BaseModel):
-    client_id: str
+# 프로세스 전역 대화 저장소. browser._connections 와 동일하게 인메모리 단일 인스턴스.
+_store = ConversationStore(max_history=MAX_HISTORY_MESSAGES)
 
 
 @router.post("/chat")
-async def chat(req: ChatRequest):
-    return {"message": f"Echo: {req.message}"}
+async def chat(req: ChatRequest, client_id: str = Query(...)) -> StreamingResponse:
+    """사용자 메시지 1건에 대한 응답을 SSE 로 흘려보낸다.
+
+    이벤트 포맷: `data: <StreamEvent JSON>\\n\\n`
+    이벤트 종류는 chat.models.StreamEvent 의 discriminator 참고.
+    """
+
+    async def event_source():
+        async for event in harness.run_turn(
+            client_id,
+            req.message,
+            store=_store,
+            registry=registry,
+            system_prompt=SYSTEM_PROMPT,
+            max_iterations=MAX_AGENT_ITERATIONS,
+        ):
+            yield f"data: {event.model_dump_json()}\n\n"
+
+    return StreamingResponse(
+        event_source(),
+        media_type="text/event-stream",
+        # nginx 등 중간 프록시가 버퍼링하지 못하도록 표시. uvicorn 직결이면 무해.
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
-@router.post("/register")
-async def register(req: ClientRequest):
-    browser.register_client(req.client_id)
+@router.get("/conversation")
+async def get_conversation(
+    client_id: str = Query(...),
+) -> ConversationResponse:
+    """현재 client 의 대화 히스토리. 새로고침 후 복원용."""
+    history = _store.get_history(client_id)
+    # system 메시지는 harness 가 매 턴 다시 붙이므로 사용자에게는 노출하지 않음.
+    visible = [m for m in history if m.role != "system"]
+    return ConversationResponse(messages=visible)
 
-    print(f"register: {req.client_id}")
 
+@router.delete("/conversation")
+async def reset_conversation(client_id: str = Query(...)) -> dict:
+    """현재 client 의 대화를 비운다 (새 대화 버튼)."""
+    _store.reset(client_id)
     return {"ok": True}
 
 
-@router.post("/heartbeat")
-async def heartbeat(req: ClientRequest):
-    browser.touch_client(req.client_id)
+@router.get("/presence")
+async def presence(request: Request, client_id: str = Query(...)) -> StreamingResponse:
+    """클라이언트 생존을 SSE 단일 채널로 추적한다.
 
-    return {"ok": True}
+    연결 유지 = 살아있음. EventSource 종료 시 generator finally 가 disconnect_client
+    를 부르고, browser.py 의 grace timer 가 F5/네트워크 블립을 흡수한다.
+    """
 
+    async def stream():
+        browser.connect_client(client_id)
+        print(f"connect: {client_id}")
 
-@router.post("/unregister")
-async def unregister(req: ClientRequest):
-    browser.unregister_client(req.client_id)
+        try:
+            # EventSource 가 재연결할 때 사용할 backoff 힌트 (ms).
+            yield f"retry: {PRESENCE_RETRY_HINT_MS}\n\n"
+            yield ": connected\n\n"
 
-    print(f"unregister: {req.client_id}")
+            while True:
+                await asyncio.sleep(PRESENCE_KEEPALIVE_INTERVAL)
 
-    return {"ok": True}
+                if await request.is_disconnected():
+                    break
+
+                yield ": ping\n\n"
+        finally:
+            browser.disconnect_client(client_id)
+            print(f"disconnect: {client_id}")
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/version")

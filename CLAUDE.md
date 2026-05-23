@@ -103,17 +103,19 @@ updater/         ─(PyI)───►  build/updater/Updater.exe    ┴─►  r
 1. `backend/main.py` 진입 → `uvicorn.Config(app, ...) + Server(config)` 생성 후 `browser.server`에 보관
    (Windows에서 `os.kill(SIGTERM)`은 lifespan shutdown을 실행하지 않으므로 `server.should_exit = True` 경로만 사용)
 2. watchdog + open_browser 데몬 스레드 시작 → `server.run()`
-3. 브라우저가 열리면 `App.svelte`가 `crypto.randomUUID()`로 client_id 생성 → sessionStorage 저장 → `/api/register`
-4. 5초 간격 `/api/heartbeat`, `pagehide` 시 `navigator.sendBeacon('/api/unregister', Blob(JSON))`
-5. `browser.watchdog`이 transition 기반으로 클라이언트 부재 감지 → `SHUTDOWN_GRACE` 경과 시 `server.should_exit = True`
+3. 브라우저가 열리면 `App.svelte`가 `crypto.randomUUID()`로 client_id 생성 → sessionStorage 저장 → `new EventSource('/api/presence?client_id=…')`
+4. 서버 generator 가 `browser.connect_client` 호출, 연결 유지 = 생존. 30초마다 `: ping` 코멘트로 idle timeout 방지
+5. 탭 닫기/네비게이션 → EventSource 종료 → generator `finally` 가 `browser.disconnect_client` 호출 → `PRESENCE_RECONNECT_GRACE` (2s) 후 실제 제거 (F5 흡수용)
+6. `browser.watchdog`이 transition 기반으로 클라이언트 부재 감지 → `SHUTDOWN_GRACE` 경과 시 `server.should_exit = True`
 
 ### 동시성 모델
 
-`backend/browser.py`의 `clients: dict[str, float]`는 **uvicorn event-loop와 watchdog 스레드가 동시 접근**한다.
+`backend/browser.py`의 `clients: set[str]` 와 `_pending_disconnects: dict[str, threading.Timer]` 는 **uvicorn event-loop · watchdog 스레드 · `threading.Timer` 콜백 스레드** 가 동시 접근한다.
 
 - 모든 read/write는 `_lock` 안에서 수행
-- 순회는 `_snapshot()`이 `list(clients.items())`로 락 안에서 스냅샷한 뒤 락 밖에서 처리
-- `_ever_registered` 플래그로 "최초 register 이전 STARTUP_GRACE(60s) 대기"와 "register 후 비어있음(SHUTDOWN_GRACE 2s)"을 구분
+- 순회는 `_snapshot()`이 `set(clients)` 로 락 안에서 스냅샷한 뒤 락 밖에서 처리
+- `Timer.cancel()` / `Timer.start()` 는 자체 락을 잡으므로 우리 `_lock` 밖에서 호출 (lock ordering)
+- `_ever_registered` 플래그로 "최초 연결 이전 STARTUP_GRACE(60s) 대기"와 "연결 후 비어있음(SHUTDOWN_GRACE 2s)"을 구분
 
 ### Origin 가드 — 보안 경계
 
@@ -152,7 +154,7 @@ frontend ↔ backend 가 공통 의존하는 host/port는 프로젝트 루트 `.
 
 - `backend/config.py` — dev에서만 `os.environ.setdefault`로 로드 (shell export가 우선)
 - `frontend/vite.config.js` — `loadEnv(mode, "..", "APP_")` + `envDir: ".."`
-- 모듈 한정 상수(`STARTUP_GRACE`, `HEARTBEAT_TIMEOUT`, `UPDATE_*` 등)는 `.env`에 끌어내지 말고 `config.py`에 유지
+- 모듈 한정 상수(`STARTUP_GRACE`, `PRESENCE_*`, `UPDATE_*` 등)는 `.env`에 끌어내지 말고 `config.py`에 유지
 
 ### Release 스크립트 — 주의점
 
@@ -171,8 +173,10 @@ frontend ↔ backend 가 공통 의존하는 host/port는 프로젝트 루트 `.
 |------|--------|------|
 | `HOST` | `127.0.0.1` | 바인드 주소 (`APP_HOST`로 dev override) |
 | `PORT` | `8765` | 포트 (`APP_PORT`로 dev override) |
-| `STARTUP_GRACE` | `60`초 | 최초 register 대기 상한. 그 안에는 비었다고 판정하지 않음 |
-| `HEARTBEAT_TIMEOUT` | `5`초 | stale 클라이언트 제거 기준 |
+| `STARTUP_GRACE` | `60`초 | 최초 presence 연결 대기 상한. 그 안에는 비었다고 판정하지 않음 |
+| `PRESENCE_RECONNECT_GRACE` | `2`초 | presence SSE 가 끊겼다가 같은 client_id 로 재연결될 수 있는 시간 (F5/블립 흡수) |
+| `PRESENCE_KEEPALIVE_INTERVAL` | `30`초 | 서버가 presence 채널에 `: ping` 코멘트를 흘려보내는 주기 |
+| `PRESENCE_RETRY_HINT_MS` | `1000`ms | SSE `retry:` 디렉티브로 EventSource 재연결 간격을 짧게 강제 |
 | `SHUTDOWN_GRACE` | `2`초 | 마지막 클라이언트 사라진 후 종료까지 대기 |
 | `NEXUS_BASE_URL` | `APP_NEXUS_BASE_URL` env or 내부 기본값 | 업데이트 저장소 |
 | `UPDATE_CHECK_CACHE_TTL` | `300`초 | `/api/update/check` 캐시 |

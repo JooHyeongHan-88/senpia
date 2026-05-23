@@ -6,6 +6,7 @@ usage: updater.exe <pid> <new_exe> <current_exe>
 2. new_exe → current_exe 로 교체.
 3. current_exe 기동 후 자기 자신 종료.
 """
+
 from __future__ import annotations
 
 import os
@@ -45,7 +46,9 @@ def _pid_alive(pid: int) -> bool:
             return False
         try:
             exit_code = ctypes.c_ulong(0)
-            ok = ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
+            ok = ctypes.windll.kernel32.GetExitCodeProcess(
+                handle, ctypes.byref(exit_code)
+            )
             if not ok:
                 return False
             return exit_code.value == STILL_ACTIVE

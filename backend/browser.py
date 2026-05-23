@@ -2,48 +2,90 @@ import threading
 import time
 import webbrowser
 
-from config import HOST, PORT, STARTUP_GRACE, HEARTBEAT_TIMEOUT, SHUTDOWN_GRACE
+from config import HOST, PORT, PRESENCE_RECONNECT_GRACE, SHUTDOWN_GRACE, STARTUP_GRACE
 
 
 _lock = threading.Lock()
-clients: dict[str, float] = {}
+
+# client_id → 살아있는 presence SSE 개수.
+# 탭 복제 / "Open in new tab" 의 경우 sessionStorage 가 복사돼 두 탭이 같은 client_id 를
+# 공유한다. 단순 set 이면 한 탭이 닫혔을 때 다른 탭도 함께 사라진 것처럼 보이므로
+# 카운트로 추적한다.
+_connections: dict[str, int] = {}
+
+# grace 중인 client_id → Timer. 카운트가 0 까지 떨어진 경우에만 등록된다.
+_pending_disconnects: dict[str, threading.Timer] = {}
+
 _ever_registered = False
 
 # uvicorn.Server 인스턴스. main.py 에서 세팅한다.
 server = None
 
 
-def register_client(client_id: str) -> None:
+def connect_client(client_id: str) -> None:
+    """presence SSE 가 새로 붙었을 때 호출. 직전에 잡힌 grace timer 가 있으면 취소한다."""
     global _ever_registered
 
     with _lock:
-        clients[client_id] = time.time()
+        _connections[client_id] = _connections.get(client_id, 0) + 1
         _ever_registered = True
 
+        timer = _pending_disconnects.pop(client_id, None)
 
-def touch_client(client_id: str) -> None:
+    # Timer.cancel() 은 자체 락을 잡으므로 우리 락 밖에서 호출 (lock ordering).
+    if timer is not None:
+        timer.cancel()
+
+
+def disconnect_client(client_id: str) -> None:
+    """presence SSE 가 끊겼을 때 호출.
+
+    같은 client_id 로 살아있는 다른 연결이 있으면 카운트만 감소시키고, 마지막
+    연결까지 떨어진 경우에만 grace timer 를 건다. F5 / 짧은 네트워크 블립에서
+    EventSource 가 재연결되면 connect_client 가 이 timer 를 취소한다.
+    """
+    new_timer: threading.Timer | None = None
+
     with _lock:
-        clients[client_id] = time.time()
+        current = _connections.get(client_id, 0)
+
+        if current > 1:
+            # 같은 client_id 의 다른 탭이 살아있음 — grace 진입하지 않음.
+            _connections[client_id] = current - 1
+            return
+
+        _connections.pop(client_id, None)
+
+        # 정상 흐름에서는 이미 grace 가 도는 중일 수 없지만 방어적으로 체크.
+        if client_id in _pending_disconnects:
+            return
+
+        new_timer = threading.Timer(
+            PRESENCE_RECONNECT_GRACE,
+            _finalize_disconnect,
+            args=[client_id],
+        )
+        _pending_disconnects[client_id] = new_timer
+
+    # Timer.start() 도 우리 락 밖에서.
+    new_timer.start()
 
 
-def unregister_client(client_id: str) -> None:
+def _finalize_disconnect(client_id: str) -> None:
+    """grace timer 가 만료된 뒤 _pending_disconnects 에서 항목 제거.
+
+    grace 도중 재연결이 들어왔으면 connect_client 가 이미 이 timer 를 취소했어야
+    하지만, 콜백이 락 대기 중이었다면 여기서 한 번 더 정리한다.
+    """
     with _lock:
-        clients.pop(client_id, None)
+        _pending_disconnects.pop(client_id, None)
 
 
-def _snapshot() -> tuple[list[tuple[str, float]], bool]:
+def _snapshot() -> tuple[set[str], bool]:
+    """watchdog 가 보는 "살아있음" = 현재 연결 중인 client OR grace 중인 client."""
     with _lock:
-        return list(clients.items()), _ever_registered
-
-
-def _remove_stale(now: float) -> list[str]:
-    with _lock:
-        stale = [cid for cid, ts in clients.items() if now - ts > HEARTBEAT_TIMEOUT]
-
-        for cid in stale:
-            clients.pop(cid, None)
-
-        return stale
+        alive = set(_connections) | set(_pending_disconnects)
+        return alive, _ever_registered
 
 
 def open_browser() -> None:
@@ -66,20 +108,14 @@ def watchdog() -> None:
         time.sleep(1)
 
         now = time.time()
-
-        stale = _remove_stale(now)
-        for cid in stale:
-            print(f"stale remove: {cid}")
-
         snapshot, ever_registered = _snapshot()
 
-        # 첫 register 가 아직 안 들어왔으면 STARTUP_GRACE 만큼만 대기.
+        # 첫 연결이 아직 안 들어왔으면 STARTUP_GRACE 만큼만 대기.
         # 그 안에는 비었다고 판정하지 않는다.
         if not ever_registered:
             if now - started_at < STARTUP_GRACE:
                 continue
 
-            # STARTUP_GRACE 동안 한 번도 client 가 안 붙었으면 종료.
             print("no client connected during startup grace. shutdown")
             request_shutdown()
             return

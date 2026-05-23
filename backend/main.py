@@ -16,28 +16,30 @@ app = FastAPI()
 # API 라우터는 catch-all 보다 먼저 등록해야 GET /api/* 가 SPA fallback 에 잡히지 않는다.
 app.include_router(api_router)
 
-app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
+# build/web 가 존재할 때만 정적 자산을 서빙한다.
+# - frozen EXE: 항상 존재(sys._MEIPASS/web 임베드)
+# - dev + npm run build 완료: build/web 존재 → localhost:8765 에서 직접 서빙 가능
+# - dev + build/web 없음: 기동만 하고 서빙 생략 (Vite dev server 사용 시 이 경로)
+if WEB_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
 
+    @app.get("/")
+    async def index() -> FileResponse:
+        return FileResponse(WEB_DIR / "index.html")
 
-@app.get("/")
-async def index() -> FileResponse:
-    return FileResponse(WEB_DIR / "index.html")
+    @app.get("/{path:path}")
+    async def spa_router(path: str) -> FileResponse:
+        candidate = (WEB_DIR / path).resolve()
 
+        try:
+            candidate.relative_to(WEB_DIR.resolve())
+        except ValueError:
+            raise HTTPException(status_code=404)
 
-@app.get("/{path:path}")
-async def spa_router(path: str) -> FileResponse:
-    # dist/ 루트에 실제 존재하는 파일(favicon.svg, icons.svg 등)은 그대로 서빙.
-    candidate = (WEB_DIR / path).resolve()
+        if candidate.is_file():
+            return FileResponse(candidate)
 
-    try:
-        candidate.relative_to(WEB_DIR.resolve())
-    except ValueError:
-        raise HTTPException(status_code=404)
-
-    if candidate.is_file():
-        return FileResponse(candidate)
-
-    return FileResponse(WEB_DIR / "index.html")
+        return FileResponse(WEB_DIR / "index.html")
 
 
 if __name__ == "__main__":
@@ -45,7 +47,10 @@ if __name__ == "__main__":
     server = uvicorn.Server(config)
     browser.server = server
 
-    threading.Thread(target=watchdog, daemon=True).start()
-    threading.Thread(target=open_browser, daemon=True).start()
+    # FastAPI 가 SPA 를 서빙할 때(=build/web 존재)만 EXE 와 같은 생명주기를 가져간다.
+    # Vite dev server 와 병행할 때(build/web 없음)는 Ctrl+C 로 끄므로 watchdog 불필요.
+    if WEB_DIR.exists():
+        threading.Thread(target=watchdog, daemon=True).start()
+        threading.Thread(target=open_browser, daemon=True).start()
 
     server.run()
