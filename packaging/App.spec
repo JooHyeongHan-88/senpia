@@ -13,6 +13,9 @@ a = Analysis(
         # source -> destination inside sys._MEIPASS
         (os.path.join(root, 'build', 'web'), 'web'),
         (os.path.join(root, 'build', 'updater', 'Updater.exe'), 'updater'),
+        # Agent guideline directories — backend/chat/{prompts,skills}.py 가 MEIPASS 에서 읽음.
+        (os.path.join(root, 'PROMPTS'), 'PROMPTS'),
+        (os.path.join(root, 'SKILLS'), 'SKILLS'),
     ],
     hiddenimports=[
         'browser',

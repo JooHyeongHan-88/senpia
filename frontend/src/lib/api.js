@@ -2,12 +2,28 @@
 
 const headers = { "Content-Type": "application/json" };
 
-export async function chat(clientId, message) {
+export async function chat(clientId, message, opts = {}) {
+  // opts.forceSkills: 슬래시 커맨드로 사용자가 명시한 skill 이름 배열.
+  //   백엔드 ChatRequest.force_skills 와 매핑된다 (snake_case 변환).
+  const body = { message };
+  if (opts.forceSkills && opts.forceSkills.length > 0) {
+    body.force_skills = opts.forceSkills;
+  }
   return fetch(`/api/chat?client_id=${clientId}`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ message }),
+    body: JSON.stringify(body),
   });
+}
+
+export async function listSkills() {
+  // 부팅 시 한 번만 호출 — 슬래시 커맨드 autocomplete 데이터.
+  try {
+    const r = await fetch("/api/skills");
+    return r.ok ? r.json() : [];
+  } catch {
+    return [];
+  }
 }
 
 export async function deleteConversation(clientId) {

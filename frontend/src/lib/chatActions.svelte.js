@@ -16,12 +16,19 @@ import {
   checkUpdate,
   applyUpdate,
   getUpdateStatus,
+  listSkills,
 } from "./api.js";
 import { parseSseStream } from "./sse.js";
 import { autoTitle } from "./format.js";
 
 const SAVE_DEBOUNCE_MS = 200;
 const UPDATE_POLL_MS = 500;
+
+// 탭이 열려 있는 동안 서버를 살려두기 위한 브라우저 레벨 presence ID.
+// 세션 유무와 무관하게 탭이 닫힐 때까지 연결을 유지하므로 세션 삭제 시 서버가
+// 종료되는 버그를 방지한다. 페이지 로드마다 새로 발급해도 grace 기간 안에
+// 새 연결이 올라와 watchdog 은 계속 "alive" 로 판정한다.
+const BROWSER_KEEPALIVE_ID = `bpid-${crypto.randomUUID()}`;
 
 let presenceSource = null;
 let saveTimer = null;
@@ -44,7 +51,9 @@ function flushSave() {
   saveSessions(ui.sessions);
 }
 
-// ---------- presence (활성 세션의 client_id 로만 1개 유지) ----------
+// ---------- presence ----------
+// 규칙: presenceSource 는 항상 1개. 세션이 있으면 해당 세션 ID, 없으면
+// BROWSER_KEEPALIVE_ID 로 열어 탭이 닫힐 때까지 서버를 살려 둔다.
 
 function openPresence(clientId) {
   closePresence();
@@ -124,7 +133,9 @@ export async function deleteSession(id) {
       openPresence(next.id);
       await restoreConversation(next.id, toBackendMessages(next.messages));
     } else {
-      closePresence();
+      // 세션이 모두 사라졌지만 브라우저는 열려 있다 — keepalive 로 전환해 서버 종료를 막는다.
+      // 다음 createSession() 이 호출되면 openPresence(sessionId) 가 이 연결을 교체한다.
+      openPresence(BROWSER_KEEPALIVE_ID);
     }
   }
 
@@ -148,8 +159,11 @@ export function renameSession(id, newTitle) {
 // ---------- 메시지 전송 ----------
 
 export async function sendMessage(text) {
-  const content = text.trim();
-  if (!content || ui.streaming) return;
+  const displayContent = text.trim();
+  const hasSkills = ui.composerSkills.length > 0;
+
+  // 텍스트가 없어도 skill chip 이 부착돼 있으면 전송을 허용한다.
+  if ((!displayContent && !hasSkills) || ui.streaming) return;
 
   // 활성 세션이 없으면 즉석 생성 (첫 메시지 시나리오).
   if (!ui.activeSessionId) {
@@ -160,10 +174,16 @@ export async function sendMessage(text) {
   if (!session) return;
 
   const now = Date.now();
+
+  // composerSkills 가 비어 있지 않다면 사용자가 슬래시로 명시한 것 — 응답이 오기 전에도
+  // 즉시 뱃지가 보이도록 초기값으로 복사. skill_active 이벤트가 와도 동일 목록이므로 멱등.
+  const forced = hasSkills ? [...ui.composerSkills] : null;
+
   const userMsg = {
     id: crypto.randomUUID(),
     role: "user",
-    content,
+    content: displayContent,          // UI 표시용 — 빈 문자열 가능 (skill 만 전송한 경우)
+    appliedSkills: forced,            // 대화창 내 skill 뱃지 표시용
     toolStatus: null,
     createdAt: now,
   };
@@ -172,6 +192,7 @@ export async function sendMessage(text) {
     role: "assistant",
     content: "",
     toolStatus: null,
+    activeSkills: forced, // string[] | null — skill_active 이벤트로 채워진다
     createdAt: now,
   };
 
@@ -179,7 +200,8 @@ export async function sendMessage(text) {
   session.updatedAt = now;
 
   if (!session.titleEdited && session.messages.filter((m) => m.role === "user").length === 1) {
-    session.title = autoTitle(content);
+    // 본문 없이 skill 만 전송한 경우 skill 이름으로 제목을 채운다.
+    session.title = autoTitle(displayContent || (forced ? forced.join(", ") : "새 대화"));
   }
 
   ui.sessions = [...ui.sessions];
@@ -207,8 +229,25 @@ export async function sendMessage(text) {
     scheduleSave();
   };
 
+  const setActiveSkills = (skills) => {
+    const s = activeSession();
+    if (!s) return;
+    const last = s.messages[s.messages.length - 1];
+    if (!last || last.role !== "assistant") return;
+    last.activeSkills = skills;
+    ui.sessions = [...ui.sessions];
+    // 스킬 목록은 내용이 아니므로 저장은 생략 (메모리에만 유지)
+  };
+
+  // 백엔드로 보낼 force_skills 를 미리 캡처 후, 다음 입력에 잔여물이 남지 않도록 즉시 리셋.
+  const forceSkills = forced;
+  ui.composerSkills = [];
+
+  // LLM 에 전달할 실제 메시지 — 본문이 비어 있으면 skill 이름으로 대체해 의미 있는 컨텍스트 제공.
+  const llmContent = displayContent || (forceSkills ? forceSkills.join(", ") : "");
+
   try {
-    const response = await chat(session.id, content);
+    const response = await chat(session.id, llmContent, { forceSkills });
     if (!response.ok || !response.body) {
       appendDelta(`[error] HTTP ${response.status}`);
       return;
@@ -221,9 +260,12 @@ export async function sendMessage(text) {
         setToolStatus(`🔧 ${ev.call.name} 호출 중...`);
       } else if (ev.type === "tool_result") {
         setToolStatus(`🔧 ${ev.name} → ${ev.result}`);
+      } else if (ev.type === "skill_active") {
+        setActiveSkills(ev.skills);
       } else if (ev.type === "error") {
         appendDelta(`\n\n[error] ${ev.message}`);
       }
+      // todo_update / ask_user 는 향후 UI 확장 시 처리 예정
     });
   } catch (e) {
     appendDelta(`\n\n[error] ${String(e)}`);
@@ -255,7 +297,15 @@ export async function initApp() {
     if (s && s.messages.length > 0) {
       await restoreConversation(activeId, toBackendMessages(s.messages));
     }
+  } else {
+    // 저장된 세션이 없어도 탭이 열려 있는 동안 서버를 유지한다.
+    openPresence(BROWSER_KEEPALIVE_ID);
   }
+
+  // 슬래시 커맨드 autocomplete 데이터 — 부팅 시 1회. 실패해도 입력은 정상 작동.
+  listSkills().then((skills) => {
+    ui.availableSkills = skills;
+  });
 
   pollUpdate();
 }

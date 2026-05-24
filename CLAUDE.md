@@ -68,13 +68,17 @@ pwsh packaging/release-dryrun.ps1
 ```
 backend/
   config.py           경로·env var 해석의 단일 진실 공급원
-  main.py             uvicorn 기동, watchdog 스레드
+  main.py             uvicorn 기동, watchdog 스레드, prompt/skill registry 부팅 로드
   browser.py          presence 클라이언트 추적 + watchdog
   updater.py          자동 업데이트 로직
   routers/api.py      FastAPI 라우터 전체 (chat, settings, presence, update)
   chat/               harness(턴 루프) · store(히스토리) · tools · models
+                       · prompts(PROMPTS 합성) · skills(SKILLS 라우팅)
+                       · state_store(AgentState 디스크 영속) · guard(슬롯 가드)
   chat/providers/     factory + mock + openai (프로바이더 패키지)
   settings/           LLM 설정 저장소 (models, store, masking)
+PROMPTS/              base.md + safety.md — 모든 턴 system prompt 머리에 합성
+SKILLS/               작업별 가이드. Front Matter trigger 로 라우팅, 매칭된 본문만 lazy 로드
 
 frontend/src/
   App.svelte          레이아웃 셸 — <Sidebar><TopBar><ChatArea><Composer> 조합만
@@ -110,6 +114,7 @@ updater/      ─(PyI)───► build/updater/Updater.exe
 - **dev**: 프로젝트 루트 → 정적 자산 `build/web/`
 
 → **새 정적 자산을 추가하면 반드시 `packaging/App.spec`의 `datas`에도 등록**해야 frozen에서 보인다.
+→ `PROMPTS/`, `SKILLS/` 도 동일하게 `App.spec` `datas` 에 등록되어 있으며, 새 파일을 추가해도 디렉토리 자체가 이미 포함되어 있으므로 spec 재수정 없이 다음 빌드에 반영된다.
 
 ### App 생명주기 (EXE 기동 시)
 

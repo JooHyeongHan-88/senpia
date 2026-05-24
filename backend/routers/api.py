@@ -10,10 +10,14 @@ import updater
 from _version import __version__
 from chat import harness
 from chat.models import ChatRequest, ConversationResponse, RestoreRequest
+from chat.prompts import registry as prompt_registry
 from chat.providers.factory import get_provider
+from chat.skills import registry as skill_registry
+from chat.state_store import AgentStateStore
 from chat.store import ConversationStore
 from chat.tools import registry
 from config import (
+    AGENT_STATE_PATH,
     ALLOWED_ORIGIN,
     MAX_AGENT_ITERATIONS,
     MAX_HISTORY_MESSAGES,
@@ -59,6 +63,9 @@ router = APIRouter(prefix="/api", dependencies=[Depends(require_local_origin)])
 # 프로세스 전역 대화 저장소. browser._connections 와 동일하게 인메모리 단일 인스턴스.
 _store = ConversationStore(max_history=MAX_HISTORY_MESSAGES)
 
+# Agent planner / slot 상태는 디스크 영속 — EXE 재기동 후에도 진행 상황 유지.
+_state_store = AgentStateStore(file_path=AGENT_STATE_PATH)
+
 
 # 프로세스 전역 설정 저장소. 파일 기반 영속화, 스레드 안전.
 def _init_settings_store() -> SettingsStore:
@@ -101,10 +108,14 @@ async def chat(req: ChatRequest, client_id: str = Query(...)) -> StreamingRespon
                 client_id,
                 req.message,
                 store=_store,
+                state_store=_state_store,
+                skill_registry=skill_registry,
+                prompt_registry=prompt_registry,
                 registry=registry,
                 provider=provider,
-                system_prompt=SYSTEM_PROMPT,
+                system_prompt_fallback=SYSTEM_PROMPT,
                 max_iterations=MAX_AGENT_ITERATIONS,
+                force_skills=req.force_skills,
             ):
                 yield f"data: {event.model_dump_json()}\n\n"
         except Exception:
@@ -133,8 +144,9 @@ async def get_conversation(
 
 @router.delete("/conversation")
 async def reset_conversation(client_id: str = Query(...)) -> dict:
-    """현재 client 의 대화를 비운다 (새 대화 버튼)."""
+    """현재 client 의 대화와 에이전트 상태(todo/pending slot)를 함께 비운다."""
     _store.reset(client_id)
+    _state_store.reset(client_id)
     return {"ok": True}
 
 
@@ -261,6 +273,47 @@ async def list_providers() -> list[ProviderMeta]:
             docs_url="https://platform.openai.com/docs/api-reference",
         ),
     ]
+
+
+@router.get("/skills")
+async def list_skills() -> list[dict]:
+    """등록된 모든 skill 의 메타데이터 — 슬래시 커맨드 autocomplete 용.
+
+    body 는 포함하지 않는다 (응답 크기 + lazy 정책). 프론트는 이 목록을 부팅 시
+    한 번 받아 캐시한다.
+    """
+    return [
+        {
+            "name": meta.name,
+            "description": meta.description,
+            "trigger": meta.trigger,
+            "priority": meta.priority,
+        }
+        for meta in skill_registry.list_meta()
+    ]
+
+
+@router.get("/debug/skill-route")
+async def debug_skill_route(message: str = Query(...)) -> dict:
+    """입력 메시지에 대해 어떤 SKILL 이 매칭되는지 반환한다 (개발·검증용).
+
+    LLM 연결 없이 SKILLS/ 라우팅 동작을 확인할 수 있다.
+    예: GET /api/debug/skill-route?message=지금 몇 시야
+    """
+    matched = skill_registry.select(message)
+    return {
+        "message": message,
+        "matched_skills": [
+            {
+                "name": s.meta.name,
+                "description": s.meta.description,
+                "trigger": s.meta.trigger,
+                "priority": s.meta.priority,
+                "requires_tools": s.meta.requires_tools,
+            }
+            for s in matched
+        ],
+    }
 
 
 @router.post("/settings/test")

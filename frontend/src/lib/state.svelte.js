@@ -26,6 +26,13 @@ export const ui = $state({
   settingsTestResult: null,
   /** @type {Array<{ id, label, requires_api_key, requires_base_url, requires_model, suggested_models, docs_url }>} */
   providers: [],
+
+  // 슬래시 커맨드용 — 부팅 시 GET /api/skills 결과 캐시.
+  /** @type {Array<{ name: string, description: string, trigger: string[], priority: number }>} */
+  availableSkills: [],
+  // 현재 Composer 에 부착된 skill 이름 목록 (전송 시 force_skills 로 백엔드 전달, 직후 리셋).
+  /** @type {string[]} */
+  composerSkills: [],
 });
 
 export function activeSession() {

@@ -108,6 +108,28 @@ def _get_settings_path() -> Path:
 
 SETTINGS_FILE_PATH: Path = _get_settings_path()
 
+
+# Agent state (todo/pending slot) 영속 경로.
+# 사용자별 진행 상황을 EXE 재기동/세션 전환 후에도 유지하기 위함.
+def _get_agent_state_path() -> Path:
+    if getattr(sys, "frozen", False):
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            return Path(appdata) / APP_NAME / "agent_states.json"
+    return _project_root() / "backend" / ".runtime" / "agent_states.json"
+
+
+AGENT_STATE_PATH: Path = _get_agent_state_path()
+
+
+# PROMPTS/ · SKILLS/ 디렉토리 — frozen 은 MEIPASS 임베드, dev 는 프로젝트 루트.
+if getattr(sys, "frozen", False):
+    PROMPTS_DIR: Path = _project_root() / "PROMPTS"
+    SKILLS_DIR: Path = _project_root() / "SKILLS"
+else:
+    PROMPTS_DIR = _project_root() / "PROMPTS"
+    SKILLS_DIR = _project_root() / "SKILLS"
+
 # Timeout for testing provider connectivity.
 SETTINGS_TEST_TIMEOUT: int = int(os.environ.get("APP_SETTINGS_TEST_TIMEOUT", "10"))
 

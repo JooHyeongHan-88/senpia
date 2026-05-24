@@ -7,11 +7,18 @@ from fastapi.staticfiles import StaticFiles
 
 import browser
 from browser import watchdog, open_browser
+from chat.prompts import registry as prompt_registry
+from chat.skills import registry as skill_registry
 from config import ASSETS_DIR, WEB_DIR, HOST, PORT
 from routers.api import router as api_router
 
 
 app = FastAPI()
+
+# PROMPTS / SKILLS 베이스 메타데이터는 1회 캐시. dev 모드 핫리로드는 각 registry 가
+# 본문 읽을 때 mtime 으로 자동 감지하므로 부팅 시점 로드만 명시한다.
+prompt_registry.load()
+skill_registry.load()
 
 # API 라우터는 catch-all 보다 먼저 등록해야 GET /api/* 가 SPA fallback 에 잡히지 않는다.
 app.include_router(api_router)
