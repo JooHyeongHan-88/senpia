@@ -153,6 +153,17 @@ class SkillActiveEvent(BaseModel):
     skills: list[str]
 
 
+class ReasoningEvent(BaseModel):
+    """LLM 내부 추론 과정 텍스트 청크 — DeltaEvent 와 분리해 전달한다.
+
+    OpenAI o-series 모델이 streaming 중 delta.reasoning_content 를 내려줄 때 생성된다.
+    프론트는 접을 수 있는 '생각 중...' 블록으로 표시한다.
+    """
+
+    type: Literal["reasoning"] = "reasoning"
+    content: Annotated[str, "이번 chunk 에 추가된 추론 텍스트 조각"]
+
+
 StreamEvent = Annotated[
     DeltaEvent
     | ToolCallEvent
@@ -161,7 +172,8 @@ StreamEvent = Annotated[
     | ErrorEvent
     | AskUserEvent
     | TodoUpdateEvent
-    | SkillActiveEvent,
+    | SkillActiveEvent
+    | ReasoningEvent,
     Field(discriminator="type"),
 ]
 

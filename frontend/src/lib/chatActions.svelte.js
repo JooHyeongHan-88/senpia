@@ -170,6 +170,22 @@ export async function sendMessage(text) {
     await createSession();
   }
 
+  // 직전 assistant 메시지에 미답변 askUser 가 있으면 answered 로 마킹한다.
+  // 사용자가 옵션 버튼 또는 직접 입력으로 응답을 보내는 시점에 카드를 비활성화한다.
+  {
+    const cur = activeSession();
+    if (cur) {
+      for (let i = cur.messages.length - 1; i >= 0; i--) {
+        const m = cur.messages[i];
+        if (m.role === "user") break; // 직전 user 메시지를 만나면 중단
+        if (m.role === "assistant" && m.askUser && !m.askUser.answered) {
+          m.askUser = { ...m.askUser, answered: true };
+          break;
+        }
+      }
+    }
+  }
+
   const session = activeSession();
   if (!session) return;
 
@@ -193,6 +209,9 @@ export async function sendMessage(text) {
     content: "",
     toolStatus: null,
     activeSkills: forced, // string[] | null — skill_active 이벤트로 채워진다
+    reasoning: "",        // ReasoningEvent 청크가 누적되는 추론 텍스트
+    todos: null,          // TodoUpdateEvent 로 갱신되는 TodoItem[] | null
+    askUser: null,        // AskUserEvent 로 설정되는 슬롯 질문 | null
     createdAt: now,
   };
 
@@ -239,6 +258,37 @@ export async function sendMessage(text) {
     // 스킬 목록은 내용이 아니므로 저장은 생략 (메모리에만 유지)
   };
 
+  const appendReasoning = (chunk) => {
+    const s = activeSession();
+    if (!s) return;
+    const last = s.messages[s.messages.length - 1];
+    if (!last || last.role !== "assistant") return;
+    last.reasoning = (last.reasoning ?? "") + chunk;
+    s.updatedAt = Date.now();
+    ui.sessions = [...ui.sessions];
+    scheduleSave();
+  };
+
+  const setTodos = (todos) => {
+    const s = activeSession();
+    if (!s) return;
+    const last = s.messages[s.messages.length - 1];
+    if (!last || last.role !== "assistant") return;
+    last.todos = todos;
+    ui.sessions = [...ui.sessions];
+    scheduleSave();
+  };
+
+  const setAskUser = (payload) => {
+    const s = activeSession();
+    if (!s) return;
+    const last = s.messages[s.messages.length - 1];
+    if (!last || last.role !== "assistant") return;
+    last.askUser = payload;
+    ui.sessions = [...ui.sessions];
+    scheduleSave();
+  };
+
   // 백엔드로 보낼 force_skills 를 미리 캡처 후, 다음 입력에 잔여물이 남지 않도록 즉시 리셋.
   const forceSkills = forced;
   ui.composerSkills = [];
@@ -264,8 +314,19 @@ export async function sendMessage(text) {
         setActiveSkills(ev.skills);
       } else if (ev.type === "error") {
         appendDelta(`\n\n[error] ${ev.message}`);
+      } else if (ev.type === "reasoning") {
+        appendReasoning(ev.content);
+      } else if (ev.type === "todo_update") {
+        setTodos(ev.todos);
+      } else if (ev.type === "ask_user") {
+        setAskUser({
+          question: ev.question,
+          slot_key: ev.slot_key,
+          options: ev.options ?? null,
+          tool_name: ev.tool_name ?? null,
+          answered: false,
+        });
       }
-      // todo_update / ask_user 는 향후 UI 확장 시 처리 예정
     });
   } catch (e) {
     appendDelta(`\n\n[error] ${String(e)}`);

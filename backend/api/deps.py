@@ -45,6 +45,9 @@ _store = ConversationStore(max_history=MAX_HISTORY_MESSAGES)
 # Agent planner / slot 상태는 디스크 영속 — EXE 재기동 후에도 진행 상황 유지.
 _state_store = AgentStateStore(file_path=AGENT_STATE_PATH)
 
+# main.py 의 시작 정리(evict_stale) 용으로 공개 참조를 제공한다.
+state_store = _state_store
+
 
 # 프로세스 전역 설정 저장소. 파일 기반 영속화, 스레드 안전.
 def _init_settings_store() -> SettingsStore:

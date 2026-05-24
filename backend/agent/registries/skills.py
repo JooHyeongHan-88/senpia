@@ -108,11 +108,23 @@ class SkillRegistry:
                 out.append(self._ensure_body(s))
         return out
 
-    def select(self, user_message: str, max_skills: int = 3) -> list[Skill]:
+    def select(
+        self,
+        user_message: str,
+        max_skills: int = 3,
+        available_tools: set[str] | None = None,
+    ) -> list[Skill]:
         """user_message 를 trigger 키워드 및 skill 이름과 매칭 → (hit count, priority) 정렬.
 
         trigger 에 없는 키워드라도 사용자가 skill 이름 자체를 입력했으면 매칭한다.
         예: 'time_lookup' 을 직접 타이핑해도 해당 skill 이 활성화된다.
+
+        Args:
+            user_message: 사용자 입력 본문.
+            max_skills: 반환할 최대 스킬 수.
+            available_tools: 현재 ToolRegistry 에 등록된 도구 이름 집합.
+                제공 시 requires_tools 에 없는 도구가 포함된 스킬의 우선순위를 낮춘다.
+                None 이면 교차검증을 건너뛰어 기존 동작을 그대로 유지한다.
         """
         if not user_message or not self._skills:
             return []
@@ -125,8 +137,18 @@ class SkillRegistry:
             # trigger 매칭 없으면 skill 이름 자체를 fallback 으로 검사
             if hits == 0 and s.meta.name.lower() in lowered:
                 hits = 1
-            if hits > 0:
-                scored.append((hits, s.meta.priority, s))
+            if hits == 0:
+                continue
+
+            priority = s.meta.priority
+            # requires_tools 교차검증 — 미등록 도구가 있으면 우선순위를 낮춘다.
+            # 완전 제거가 아닌 감점이므로, 더 나은 대안이 없으면 여전히 반환된다.
+            if available_tools is not None and s.meta.requires_tools:
+                missing_count = len(set(s.meta.requires_tools) - available_tools)
+                if missing_count > 0:
+                    priority -= missing_count * 10
+
+            scored.append((hits, priority, s))
 
         scored.sort(key=lambda x: (-x[0], -x[1]))
         return [self._ensure_body(s) for _, _, s in scored[:max_skills]]

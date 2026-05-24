@@ -91,7 +91,9 @@ async def run_turn(
         if force_skills:
             skills = skill_registry.get_by_names(force_skills)
         else:
-            skills = skill_registry.select(user_message)
+            skills = skill_registry.select(
+                user_message, available_tools=registry.names()
+            )
         state.active_skills = [s.meta.name for s in skills]
         composed_system = _compose_system_prompt(
             prompt_registry.compose(fallback=system_prompt_fallback),
@@ -130,6 +132,11 @@ async def run_turn(
 
                 if event.type == "tool_call":
                     pending_tool_calls.append(event.call)
+                    yield event
+                    continue
+
+                if event.type == "reasoning":
+                    # 추론 청크는 delta 와 동일하게 계속 흘려보낸다.
                     yield event
                     continue
 
@@ -327,7 +334,12 @@ def _handle_add_todo(state: AgentState, args: dict[str, Any]) -> str:
 
     if not added:
         return "[planner] add_todo: 유효한 description 이 없습니다"
-    return f"[planner] added {len(added)} todo(s): {added}"
+
+    skipped = len(items) - len(added)
+    msg = f"[planner] added {len(added)} todo(s): {added}"
+    if skipped > 0:
+        msg += f" (skipped {skipped} invalid item(s))"
+    return msg
 
 
 def _handle_complete_todo(state: AgentState, args: dict[str, Any]) -> str:

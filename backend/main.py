@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from agent.registries.prompts import registry as prompt_registry
 from agent.registries.skills import registry as skill_registry
 from api import router as api_router
+from api.deps import state_store
 from core import browser
 from core.browser import open_browser, watchdog
 from core.config import ASSETS_DIR, HOST, PORT, WEB_DIR
@@ -22,6 +23,16 @@ skill_registry.load()
 
 # API 라우터는 catch-all 보다 먼저 등록해야 GET /api/* 가 SPA fallback 에 잡히지 않는다.
 app.include_router(api_router)
+
+# 장기 미사용 클라이언트 상태를 정리해 agent_states.json 파일 크기가 무한 증가하는 것을
+# 막는다. EXE 기동 시 1회 실행이면 단일 사용자 앱에서는 충분하다.
+_evicted = state_store.evict_stale()
+if _evicted:
+    import logging as _logging
+
+    _logging.getLogger(__name__).info(
+        "startup: evicted %d stale agent state(s)", _evicted
+    )
 
 # build/web 가 존재할 때만 정적 자산을 서빙한다.
 # - frozen EXE: 항상 존재(sys._MEIPASS/web 임베드)

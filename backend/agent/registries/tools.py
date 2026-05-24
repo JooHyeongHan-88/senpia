@@ -47,6 +47,10 @@ class ToolRegistry:
     def get(self, name: str) -> BaseTool | None:
         return self._tools.get(name)
 
+    def names(self) -> set[str]:
+        """등록된 모든 도구 이름 집합 — SkillRegistry 교차검증에 사용."""
+        return set(self._tools.keys())
+
     def specs(self) -> list[ToolSpec]:
         """provider 에게 노출할 도구 스펙 목록."""
         return [
@@ -152,7 +156,51 @@ class CompleteTodoTool(BaseTool):
         return "[planner] complete_todo placeholder"
 
 
+class DemoSearchTool(BaseTool):
+    """AskUserEvent UI 데모용 도구 — 필수 슬롯 3개를 일부러 비워 가드를 발동시킨다.
+
+    실제 데이터 조회는 하지 않으며 슬롯 필링 흐름의 UI 검증이 목적이다.
+    """
+
+    name = "demo_search"
+    description = (
+        "지정한 기간과 형식으로 데이터를 검색한다. "
+        "date_from, date_to, format 세 인자가 모두 필요하다."
+    )
+    parameters: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "date_from": {
+                "type": "string",
+                "description": "검색 시작일 (YYYY-MM-DD)",
+            },
+            "date_to": {
+                "type": "string",
+                "description": "검색 종료일 (YYYY-MM-DD)",
+            },
+            "format": {
+                "type": "string",
+                "description": "출력 형식",
+                "enum": ["표", "차트", "요약"],
+            },
+        },
+        "required": ["date_from", "date_to", "format"],
+    }
+    slot_prompts: dict[str, str] = {
+        "date_from": "검색 시작일을 알려 주세요 (예: 2025-01-01)",
+        "date_to": "검색 종료일을 알려 주세요 (예: 2025-01-31)",
+        "format": "결과를 어떤 형식으로 볼까요?",
+    }
+
+    async def run(self, args: dict[str, Any]) -> str:
+        return (
+            f"[demo] {args.get('date_from')} ~ {args.get('date_to')} "
+            f"기간의 데이터를 '{args.get('format')}' 형식으로 검색했습니다."
+        )
+
+
 registry = ToolRegistry()
 registry.register(NowTool())
 registry.register(AddTodoTool())
 registry.register(CompleteTodoTool())
+registry.register(DemoSearchTool())

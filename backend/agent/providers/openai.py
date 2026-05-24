@@ -9,6 +9,7 @@ from agent.models import (
     DeltaEvent,
     DoneEvent,
     Message,
+    ReasoningEvent,
     StreamEvent,
     ToolCall,
     ToolCallEvent,
@@ -78,6 +79,12 @@ class OpenAIProvider:
                     if event.choices and len(event.choices) > 0:
                         choice = event.choices[0]
                         delta = choice.delta
+
+                        # Reasoning content (OpenAI o-series 모델의 thinking 토큰)
+                        # getattr 로 접근해 reasoning_content 가 없는 모델에서도 안전하게 동작.
+                        reasoning_chunk = getattr(delta, "reasoning_content", None)
+                        if reasoning_chunk:
+                            yield ReasoningEvent(content=reasoning_chunk)
 
                         # Content delta (text)
                         if delta.content:

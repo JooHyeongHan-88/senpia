@@ -1,10 +1,16 @@
 <script>
   import { renderMarkdown } from "../lib/markdown.js";
+  import { ui } from "../lib/state.svelte.js";
+  import ReasoningBlock from "./ReasoningBlock.svelte";
+  import TodoProgress from "./TodoProgress.svelte";
+  import AskUserCard from "./AskUserCard.svelte";
 
   let { message } = $props();
 
   let isUser = $derived(message.role === "user");
   let html = $derived(isUser ? "" : renderMarkdown(message.content));
+  // 이 메시지가 현재 스트리밍 중인 마지막 assistant 메시지인지 판별한다.
+  let isStreaming = $derived(ui.streaming);
 </script>
 
 <div class="row" class:user={isUser}>
@@ -37,15 +43,33 @@
         </div>
       {/if}
 
-      {#if !message.content && !message.toolStatus}
+      <!-- 추론 과정 블록 — ReasoningEvent 수신 시 표시 -->
+      {#if message.reasoning}
+        <ReasoningBlock
+          text={message.reasoning}
+          streaming={isStreaming && !message.content}
+        />
+      {/if}
+
+      <!-- 작업 진행 체크리스트 — TodoUpdateEvent 수신 시 표시 -->
+      {#if message.todos && message.todos.length > 0}
+        <TodoProgress todos={message.todos} />
+      {/if}
+
+      {#if !message.content && !message.toolStatus && !message.reasoning && !(message.todos && message.todos.length > 0)}
         <div class="thinking" aria-label="응답 생성 중">
           <span></span><span></span><span></span>
         </div>
-      {:else}
+      {:else if message.content}
         <div class="markdown">{@html html}</div>
       {/if}
       {#if message.toolStatus}
         <div class="tool-status">{message.toolStatus}</div>
+      {/if}
+
+      <!-- 슬롯 질문 카드 — AskUserEvent 수신 시 표시 -->
+      {#if message.askUser}
+        <AskUserCard askUser={message.askUser} />
       {/if}
     {/if}
   </div>
