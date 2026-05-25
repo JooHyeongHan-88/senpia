@@ -95,6 +95,7 @@ class DoneEvent(BaseModel):
 class ErrorEvent(BaseModel):
     type: Literal["error"] = "error"
     message: str
+    is_fallback: bool = False
 
 
 # ---------------------------------------------------------------------------

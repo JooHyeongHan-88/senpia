@@ -5,6 +5,7 @@ settings.json 초기 시드값(LLM_PROVIDER 등)은 SettingsStore 가 처음 켜
 이 진실 공급원이고 여기 시드는 더 이상 읽히지 않는다.
 """
 
+import logging
 import os
 import sys
 from pathlib import Path
@@ -73,7 +74,14 @@ MAX_AGENT_CALLS_PER_TURN: int = int(
 )
 
 # 서브 에이전트 호출 깊이 상한. 0=orchestrator, 1=sub-agent. 2 이상은 거부.
-MAX_AGENT_DEPTH: int = int(os.environ.get("APP_MAX_AGENT_DEPTH", "2"))
+MAX_AGENT_DEPTH: int = int(os.environ.get("APP_MAX_AGENT_DEPTH", "1"))
+if MAX_AGENT_DEPTH > 1:
+    logging.getLogger(__name__).warning(
+        "APP_MAX_AGENT_DEPTH=%d exceeds the recommended limit of 1 — "
+        "nested subagent delegation is not officially supported and may cause "
+        "unexpected behavior.",
+        MAX_AGENT_DEPTH,
+    )
 
 # store 가 client 한 명당 보관하는 메시지 수 상한 (system 제외).
 MAX_HISTORY_MESSAGES: int = int(os.environ.get("APP_MAX_HISTORY_MESSAGES", "40"))

@@ -14,7 +14,8 @@
 
 param(
     [int]$Port = 19800,
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    [switch]$Force
 )
 
 $ErrorActionPreference = "Stop"
@@ -23,18 +24,36 @@ Set-Location $root
 
 $nexusUrl = "http://127.0.0.1:$Port"
 
-# Detect AppName from packaging/App.spec (same logic as release.ps1).
-$specContent = Get-Content "packaging/App.spec" -Raw
-if ($specContent -match "name\s*=\s*'([^']+)'") {
-    $AppName = $Matches[1]
-} else {
-    $AppName = "App"
+# Load .env file into environment variables
+$envPath = Join-Path $root ".env"
+if (Test-Path $envPath) {
+    Get-Content $envPath -Encoding UTF8 | Where-Object { $_ -match '^\s*([^#\s][^=]*)=(.*)$' } | ForEach-Object {
+        $key = $Matches[1].Trim()
+        # Strip inline comment (e.g. "MyAgent  # description") then remove surrounding quotes
+        $val = ($Matches[2] -split '\s+#', 2)[0].Trim().Trim('"').Trim("'")
+        if (-not (Test-Path "env:$key")) {
+            [Environment]::SetEnvironmentVariable($key, $val)
+        }
+    }
+}
+
+# Detect AppName from environment (set by .env)
+$AppName = $env:APP_NAME
+if (-not $AppName) {
+    $AppName = "MyAgent"
 }
 
 # 1. Build
 if (-not $SkipBuild) {
     Write-Host "==> build (dryrun -- no upload)" -ForegroundColor Cyan
-    & "$PSScriptRoot\release.ps1" -NexusBaseUrl $nexusUrl -Notes "dryrun build"
+    
+    $releaseArgs = @{
+        NexusBaseUrl = $nexusUrl
+        Notes = "dryrun build"
+    }
+    if ($Force) { $releaseArgs["Force"] = $true }
+    
+    & "$PSScriptRoot\release.ps1" @releaseArgs
 } else {
     Write-Host "==> SkipBuild: skipping build step" -ForegroundColor Yellow
 

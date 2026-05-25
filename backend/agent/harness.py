@@ -27,6 +27,7 @@ run_turn 한 번 = 사용자 입력 1건에 대한 응답 1턴.
 import asyncio
 import logging
 import uuid
+import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any, ClassVar
@@ -287,6 +288,10 @@ async def _run_agent_turn(
         registry: ToolRegistry (도구 실행자).
         sub_specs: provider 에게 노출할 도구 스펙 (서브는 call_sub_agent 제외).
         agent_registry: 서브 디스패치용. None 이면 call_sub_agent 분기 비활성.
+            **서브 에이전트 context 에서는 반드시 None 으로 전달해야 한다.** 중첩
+            sub-agent 위임을 완전히 차단하는 L0 방어선. _dispatch_sub_agent 가
+            이 계약을 보장한다. (_filter_specs_for_sub_agent 의 L1 + depth guard
+            의 L2 + sentinel guard 의 L3 가 추가 안전망으로 존재한다.)
         prompt_registry: 서브 에이전트 system prompt 합성용.
         skill_registry: 서브 에이전트 SKILL 본문 lazy load 용.
         budget: 한 사용자 turn 단위 호출 카운터.
@@ -298,8 +303,16 @@ async def _run_agent_turn(
         StreamEvent: delta / tool_call / tool_result / reasoning / ask_user
             / todo_update / agent:switch / agent:progress / agent:return / error.
     """
+    # sub-agent context 에서는 agent_registry 가 None 이어야 한다.
+    # turn_messages=None 은 "서브 에이전트로 호출됐다"는 관례적 신호.
+    assert turn_messages is not None or agent_registry is None, (
+        "_run_agent_turn: sub-agent context(turn_messages=None)에서 "
+        "agent_registry 가 None 이 아님 — 중첩 sub-agent dispatch 가 열릴 수 있습니다. "
+        "_dispatch_sub_agent 가 agent_registry=None 으로 호출하는지 확인하세요."
+    )
     assistant_buffer: list[str] = []
     pending_tool_calls: list[ToolCall] = []
+    history_calls: set[tuple[str, str]] = set()
 
     for iteration in range(max_iterations):
         del iteration
@@ -507,6 +520,28 @@ async def _run_agent_turn(
                 interrupted = True
                 break
 
+            args_str = (
+                json.dumps(call.arguments, sort_keys=True) if call.arguments else ""
+            )
+            call_sig = (call.name, args_str)
+            if call_sig in history_calls:
+                result_content = "[System] 동일한 인자로 이 도구를 연속해서 호출했습니다. 루프가 감지되었습니다. 이전 실행 결과를 바탕으로 원인을 분석(Root Cause Analysis)하고 완전히 다른 접근 방식을 시도하세요."
+                _append_tool_result(messages, turn_messages, call, result_content)
+                yield ToolResultEvent(
+                    tool_call_id=call.id,
+                    name=call.name,
+                    result=result_content,
+                    is_error=True,
+                )
+                if state is not None:
+                    if state.pending_tool == call.name:
+                        state.pending_tool = None
+                        state.pending_args = {}
+                        state.missing_slots = {}
+                continue
+            else:
+                history_calls.add(call_sig)
+
             result = await _execute_tool(call, registry)
             _append_tool_result(messages, turn_messages, call, result.content)
             yield ToolResultEvent(
@@ -542,7 +577,32 @@ async def _run_agent_turn(
             max_iterations,
             agent_id,
         )
-        yield ErrorEvent(message=msg)
+        fallback_msg = Message(
+            role="user",
+            content="[System] 에이전트 반복 상한에 도달했거나 작업이 중단되었습니다. 지금까지 완료한 작업과 실패한 원인을 정리하여 사용자에게 자연어로 최종 답변을 작성하세요. 도구를 호출하지 마세요.",
+        )
+        messages.append(fallback_msg)
+
+        assistant_buffer.clear()
+        async for event in provider.astream(messages, []):
+            if event.type == "delta":
+                assistant_buffer.append(event.content)
+                yield event
+            elif event.type == "done":
+                break
+
+        assistant_text = "".join(assistant_buffer)
+        if assistant_text:
+            fallback_response = Message(role="assistant", content=assistant_text)
+            messages.append(fallback_response)
+            if turn_messages is not None:
+                turn_messages.append(fallback_response)
+            # 자연어 응답이 생성됐으므로 ErrorEvent 는 프론트에 노출하지 않는다.
+            # is_fallback=True 플래그만 보내 UI 가 마지막 메시지를 스타일링하도록 신호.
+            yield ErrorEvent(message=msg, is_fallback=True)
+        else:
+            # fallback LLM 호출 자체가 실패한 경우 — 일반 에러로 노출.
+            yield ErrorEvent(message=msg)
 
 
 # ---------------------------------------------------------------------------
@@ -639,7 +699,7 @@ async def _dispatch_sub_agent(
         provider=provider,
         registry=registry,
         sub_specs=sub_specs,
-        agent_registry=agent_registry,
+        agent_registry=None,  # sub-agent 는 중첩 dispatch 불가 (L0 방어선)
         prompt_registry=prompt_registry,
         skill_registry=skill_registry,
         budget=budget,
@@ -1141,21 +1201,31 @@ async def _execute_tool(call: ToolCall, registry: ToolRegistry) -> ToolResult:
             tool.fn(**(call.arguments or {})), timeout=tool.timeout_seconds
         )
     except asyncio.TimeoutError:
-        return ToolResult(
+        result = ToolResult(
             content=f"[timeout] {call.name} exceeded {tool.timeout_seconds}s",
             is_error=True,
         )
-    except (ValueError, KeyError, TypeError) as exc:
-        return ToolResult(content=f"[error] {type(exc).__name__}: {exc}", is_error=True)
+    except Exception as exc:
+        # 도구가 던질 수 있는 예외 범위를 사전에 열거하기 어려우므로 광역 catch 유지.
+        # 단, 스택트레이스를 보존해 운영 중 원인 추적이 가능하도록 한다.
+        logger.exception("tool '%s' raised an unexpected exception", call.name)
+        result = ToolResult(
+            content=f"[error] {type(exc).__name__}: {exc}", is_error=True
+        )
 
-    if isinstance(result, ToolResult):
-        return result
     if isinstance(result, str):
-        return ToolResult(content=result)
-    # 도구가 dict 등 임의 객체를 돌려주면 문자열화해 LLM 컨텍스트에 안전 전달.
-    return ToolResult(
-        content=str(result), data={"raw": result} if isinstance(result, dict) else None
-    )
+        result = ToolResult(content=result)
+    elif not isinstance(result, ToolResult):
+        # 도구가 dict 등 임의 객체를 돌려주면 문자열화해 LLM 컨텍스트에 안전 전달.
+        result = ToolResult(
+            content=str(result),
+            data={"raw": result} if isinstance(result, dict) else None,
+        )
+
+    if result.is_error:
+        result.content += "\n\n[System] 작업이 실패했습니다. 에러 로그를 읽고 원인을 분석(Root Cause Analysis)한 뒤 최대 1회 더 재시도하세요."
+
+    return result
 
 
 __all__ = ["run_turn", "TurnBudget", "ORCHESTRATOR_ID"]

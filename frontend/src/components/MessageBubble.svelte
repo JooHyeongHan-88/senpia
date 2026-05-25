@@ -82,7 +82,7 @@
                 <div class="agent-progress-tool">{slot.toolStatus}</div>
               {/if}
               {#if slot.todos && slot.todos.length > 0}
-                <TodoProgress todos={slot.todos} />
+                <TodoProgress todos={slot.todos} toolStatus={slot.toolStatus} />
               {/if}
               {#if slot.skillComplete}
                 <SkillCompleteBadge data={slot.skillComplete} />
@@ -105,7 +105,7 @@
 
       <!-- 작업 진행 체크리스트 — TodoUpdateEvent 수신 시 표시 -->
       {#if message.todos && message.todos.length > 0}
-        <TodoProgress todos={message.todos} />
+        <TodoProgress todos={message.todos} toolStatus={message.toolStatus} />
       {/if}
 
       <!-- 전체 작업 완료 배지 — SkillCompleteEvent 수신 시 표시 -->
@@ -118,7 +118,7 @@
           <span></span><span></span><span></span>
         </div>
       {:else if message.content}
-        <div class="markdown">{@html html}</div>
+        <div class="markdown" class:fallback={message.isFallback}>{@html html}</div>
       {/if}
       {#if message.toolStatus}
         <div class="tool-status">{message.toolStatus}</div>
@@ -160,6 +160,14 @@
     word-wrap: break-word;
     font-size: 14px;
     line-height: 1.6;
+  }
+
+  .markdown.fallback {
+    background-color: color-mix(in srgb, var(--danger) 5%, transparent);
+    border: 1px dashed var(--danger);
+    padding: 12px;
+    border-radius: 8px;
+    margin-top: 8px;
   }
 
   /* ── 스킬 뱃지 바 ── */

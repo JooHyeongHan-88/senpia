@@ -446,7 +446,21 @@ export async function sendMessage(text) {
       } else if (ev.type === "skill_active") {
         setActiveSkills(ev.skills);
       } else if (ev.type === "error") {
-        appendDelta(`\n\n[error] ${ev.message}`);
+        if (ev.is_fallback) {
+          // max_iterations 도달 후 자연어 fallback 응답이 이미 스트리밍된 경우.
+          // 콘텐츠 추가 없이 마지막 메시지에 fallback 플래그만 설정한다.
+          const s = activeSession();
+          if (s) {
+            const last = s.messages[s.messages.length - 1];
+            if (last?.role === "assistant") {
+              last.isFallback = true;
+              ui.sessions = [...ui.sessions];
+              scheduleSave();
+            }
+          }
+        } else {
+          appendDelta(`\n\n[error] ${ev.message}`);
+        }
       } else if (ev.type === "reasoning") {
         appendReasoning(ev.content);
       } else if (ev.type === "todo_update") {

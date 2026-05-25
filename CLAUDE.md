@@ -9,7 +9,7 @@ Svelte(Vite) 정적 자산을 FastAPI가 서빙하고 PyInstaller로 단일 `.ex
 
 - Python 패키지 관리: `uv` / JS 패키지 관리: `npm`
 - 빌드 산출물 흐름: **`build/` (중간)** → **`release/` (Nexus 업로드 대상)**
-- **앱 이름 변경**: `packaging/App.spec`의 `name='...'` 값 하나만 바꾸면 된다.
+- **앱 이름 변경**: `.env`의 `APP_NAME` 값 하나만 바꾸면 된다. `App.spec`과 `release.ps1`이 이 값을 읽는다.
 
 ---
 
@@ -39,6 +39,26 @@ Svelte(Vite) 정적 자산을 FastAPI가 서빙하고 PyInstaller로 단일 `.ex
 | `SKILLS/` | 오케스트레이터·서브 에이전트 공통 작업 가이드 | Front Matter `trigger` 키워드 매칭 |
 | `AGENTS/` | 서브 에이전트 페르소나·도구 화이트리스트 | `call_sub_agent(agent_name=...)` 명시 위임 |
 
+### Sub-agent 위임 구조 (Anthropic 가이드라인 준수)
+
+```
+Main agent
+├─ SKILL 동적 매칭 → system prompt 주입
+│   └─ SKILL 가이드에 따라 call_sub_agent 호출 가능 ✅
+│
+└─ sub-agent X  (call_sub_agent 로 위임된 에이전트)
+    ├─ agent.meta.skills 에 선언된 SKILL body 사용 가능 ✅
+    └─ 다시 call_sub_agent 호출 ❌  (4중 차단)
+```
+
+중첩 위임 차단 방어선 (`backend/agent/harness.py`):
+- **L0** (`_dispatch_sub_agent`): `agent_registry=None` 전달 — dispatch 분기 자체를 열지 않음
+- **L1** (`_filter_specs_for_sub_agent`): `SUB_AGENT_DISPATCH` 를 `forbidden` 집합으로 제거
+- **L2** (`MAX_AGENT_DEPTH=1`): depth=2 진입 시 즉시 `[depth-guard]` 거부
+- **L3** (`_execute_tool` sentinel guard): hallucinate 호출도 `[error] sentinel tool ...` 반환
+
+회귀 테스트: `backend/tests/test_subagent_isolation.py`
+
 ---
 
 ## 주요 명령어
@@ -55,10 +75,16 @@ cd frontend; npm install
 # 린트/포맷 — 변경 후 반드시 실행
 uv run ruff format . && uv run ruff check --fix .
 
+# 테스트
+cd backend && uv run python -m pytest tests/ -v         # 전체
+cd backend && uv run python -m pytest tests/test_subagent_isolation.py -v  # 특정 파일
+
 # 프로덕션 빌드 / 릴리즈
 pwsh packaging/release.ps1
-pwsh packaging/release.ps1 -Upload -NexusBaseUrl https://... -NexusUser <id> -NexusPass <pw> -Notes "..."
-pwsh packaging/release-dryrun.ps1     # 네트워크 없이 업데이트 파이프라인 검증
+pwsh packaging/release.ps1 -Upload -Notes "..."         # .env에서 Nexus 자격증명 자동 로드
+pwsh packaging/release.ps1 -Force                       # git dirty 상태나 버전 중복 강제 통과
+pwsh packaging/release-dryrun.ps1                       # 네트워크 없이 업데이트 파이프라인 검증
+pwsh packaging/release-dryrun.ps1 -Force                # dirty 브랜치에서 dryrun
 ```
 
 산출물: `release/{AppName}.exe`, `release/{AppName}-X.X.X.exe`, `release/latest.json`
@@ -79,7 +105,7 @@ backend/
 
   agent/              LLM 에이전트 런타임
     config.py         SYSTEM_PROMPT · temperature · LLM 시드값 · 반복 상한
-    harness.py        run_turn — 핵심 턴 루프
+    harness.py        run_turn — 핵심 턴 루프 (fallback, loop detection, error recovery 포함)
     guard.py          슬롯 가드
     models.py         Pydantic 메시지·이벤트·상태 (StreamEvent 등)
     stores/           영속·인메모리 저장소
@@ -99,7 +125,7 @@ backend/
       builtin.py      now (기본 내장)
       planner.py      add_todo / complete_todo (sentinel)
       dispatch.py     call_sub_agent (sentinel)
-      demo.py         demo_search (가드 데모용)
+      clarify.py      ask_user (sentinel)
 
   api/                HTTP 엔드포인트 (도메인별 분할)
     __init__.py       5개 라우터 통합 export
@@ -115,6 +141,9 @@ backend/
     models.py         LLMSettings · ProviderMeta · ConnectionTest*
     store.py          SettingsStore (threading.Lock)
     masking.py        API 키 마스킹
+
+  tests/              회귀 테스트
+    test_subagent_isolation.py  중첩 서브 에이전트 차단 L0~L3 검증
 
 PROMPTS/              base.md + safety.md + orchestrator.md — system prompt 합성
 SKILLS/               작업별 가이드. Front Matter trigger 로 라우팅, 매칭된 본문만 lazy 로드
@@ -142,24 +171,24 @@ updater/      ─(PyI)───► build/updater/Updater.exe
 
 ---
 
-## 환경 변수 (`backend/core/config.py` · `backend/agent/config.py` · `backend/settings/config.py` / `.env`)
+## 환경 변수 (`.env` / `backend/core/config.py` · `backend/agent/config.py`)
 
-`.env`는 dev 전용. frozen EXE는 OS 환경 변수만 읽는다.
+`.env`는 dev 전용이며 **빌드 파이프라인(`App.spec`, `release.ps1`)의 단일 진실 공급원**. frozen EXE는 OS 환경 변수만 읽는다.
 
 | 환경 변수 | 기본값 | 설명 |
 |---|---|---|
 | `APP_HOST` | `127.0.0.1` | 바인드 주소 |
 | `APP_PORT` | `8765` | 포트 |
+| `APP_NAME` | `MyAgent` | 앱 이름 (EXE 파일명, settings.json 경로) |
+| `APP_NEXUS_BASE_URL` | (내부 기본값) | 업데이트 저장소 URL |
+| `APP_NEXUS_USER` | — | release.ps1 자동 업로드용 계정 |
+| `APP_NEXUS_PASSWORD` | — | release.ps1 자동 업로드용 비밀번호 |
 | `APP_STARTUP_GRACE` | `60` | 최초 presence 연결 대기 상한 (초) |
 | `APP_SHUTDOWN_GRACE` | `2` | 마지막 클라이언트 사라진 후 종료까지 (초) |
 | `APP_PRESENCE_RECONNECT_GRACE` | `2` | F5/블립 흡수 재연결 허용 시간 (초) |
-| `APP_PRESENCE_KEEPALIVE_INTERVAL` | `30` | presence SSE ping 주기 (초) |
-| `APP_PRESENCE_RETRY_HINT_MS` | `1000` | EventSource retry 디렉티브 (ms) |
-| `APP_NEXUS_BASE_URL` | (내부 기본값) | 업데이트 저장소 |
 | `APP_UPDATE_CHECK_TIMEOUT` | `5` | latest.json GET 타임아웃 (초) |
 | `APP_UPDATE_DOWNLOAD_TIMEOUT` | `60` | EXE 다운로드 타임아웃 (초) |
 | `APP_UPDATE_CHECK_CACHE_TTL` | `300` | /api/update/check 캐시 TTL (초) |
-| `APP_NAME` | `MyAgent` | 앱 이름 (settings.json 경로, EXE 파일명) |
 | `APP_LLM_PROVIDER` | `mock` | 초기 settings.json 시드용 |
 | `APP_LLM_BASE_URL` | — | 초기 시드용 |
 | `APP_LLM_MODEL` | — | 초기 시드용 |
@@ -168,9 +197,25 @@ updater/      ─(PyI)───► build/updater/Updater.exe
 | `APP_LLM_TEMPERATURE` | `0.7` | 생성 temperature |
 | `APP_LLM_MAX_TOKENS` | — | 미설정 시 provider 기본값 |
 | `APP_MAX_AGENT_ITERATIONS` | `5` | 한 턴당 provider→tool 반복 상한 |
+| `APP_MAX_AGENT_DEPTH` | `1` | 서브 에이전트 호출 깊이 상한 (1 이상 변경 시 경고) |
 | `APP_MAX_HISTORY_MESSAGES` | `40` | 클라이언트당 보관 메시지 수 상한 |
 | `APP_SETTINGS_TEST_TIMEOUT` | `10` | 연결 테스트 타임아웃 (초) |
 | `APP_TOOL_DEFAULT_TIMEOUT` | `30` | Tool 1회 실행 timeout (초) — 도구별 `timeout_seconds` 로 override |
+
+> `.env` 값에 `# 인라인 주석`이 있어도 파서가 자동으로 제거한다.
+
+---
+
+## 에이전트 런타임 주요 동작
+
+### 루프 감지 (Smart Loop Detection)
+동일 도구를 동일 인자로 재호출하면 실행을 차단하고 LLM에게 원인 분석(RCA) 후 다른 접근법을 요구하는 시스템 메시지를 주입한다. `_run_agent_turn` 내 `history_calls: set[tuple[str, str]]`로 관리.
+
+### 에러 회복 (Error Recovery)
+도구가 `is_error=True`를 반환하면 `result.content` 끝에 RCA + 1회 재시도 유도 메시지를 자동 append한다 (`_execute_tool`).
+
+### Graceful Degradation (Fallback)
+`max_iterations` 도달 시 tools 없이 LLM을 한 번 더 호출해 "지금까지 완료된 작업과 실패 원인"을 자연어로 생성한 뒤 `ErrorEvent(is_fallback=True)`를 발행한다. 프론트엔드는 이 플래그를 감지해 해당 메시지를 danger 테마로 스타일링한다.
 
 ---
 
@@ -232,6 +277,7 @@ priority: 5
 - `skills` 에 SKILLS 이름을 등록하면 해당 트리거 발생 시 오케스트레이터가 자동 위임 (Case 3).
 - `tools` 가 비어 있으면 해당 에이전트는 등록된 모든 도구를 사용할 수 있다.
 - 본문(페르소나)은 위임 시점에 lazy load — 부팅 비용 없음.
+- 서브 에이전트는 다시 `call_sub_agent` 를 호출할 수 없다 (4중 방어선으로 차단됨).
 
 ---
 

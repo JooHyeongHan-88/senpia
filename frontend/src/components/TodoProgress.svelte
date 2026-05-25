@@ -13,7 +13,7 @@
    * 추가되면 재귀 렌더링으로 전환 가능한 구조로 작성한다.
    */
 
-  let { todos = [] } = $props();
+  let { todos = [], toolStatus = "" } = $props();
 
   let expanded = $state(true);
 
@@ -22,6 +22,9 @@
   );
   let failedCount = $derived(
     todos.filter((t) => t.status === "failed").length
+  );
+  let isRetrying = $derived(
+    toolStatus && toolStatus.includes("⚠️") && (toolStatus.includes("재시도") || toolStatus.includes("루프") || toolStatus.includes("실패"))
   );
 
   /**
@@ -68,7 +71,12 @@
 
           <!-- 설명 + 요약 -->
           <span class="item-body">
-            <span class="desc">{item.description}</span>
+            <span class="desc">
+              {item.description}
+              {#if item.status === "running" && isRetrying}
+                <span class="retry-badge">복구 시도 중...</span>
+              {/if}
+            </span>
             {#if item.result_summary && (item.status === "completed" || item.status === "failed")}
               <span class="summary">{item.result_summary}</span>
             {/if}
@@ -225,5 +233,24 @@
   .summary {
     font-size: 11px;
     color: var(--fg-subtle);
+  }
+
+  .retry-badge {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 6px;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--danger);
+    background: color-mix(in srgb, var(--danger) 15%, transparent);
+    border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
+    border-radius: 12px;
+    vertical-align: middle;
+    animation: blink 1.5s infinite ease-in-out;
+  }
+
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
   }
 </style>

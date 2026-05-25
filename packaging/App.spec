@@ -5,6 +5,20 @@ import os
 # root     = project root (one level up)
 root = os.path.dirname(SPECPATH)
 
+# Detect AppName from .env
+app_name = 'MyAgent'
+env_path = os.path.join(root, '.env')
+if os.path.exists(env_path):
+    with open(env_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith('APP_NAME='):
+                raw = line.split('=', 1)[1]
+                # Strip inline comment (e.g. "MyAgent  # description")
+                raw = raw.split('#', 1)[0]
+                app_name = raw.strip().strip('"\'')
+                break
+
 a = Analysis(
     [os.path.join(root, 'backend', 'main.py')],
     pathex=[os.path.join(root, 'backend')],
@@ -65,7 +79,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='MyAgent',  # <-- change this to rename the output EXE (e.g. 'MyTool')
+    name=app_name,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
