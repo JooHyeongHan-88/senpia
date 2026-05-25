@@ -23,6 +23,7 @@ class PromptRegistry:
 
     # 합성 순서 — base(페르소나) → safety(가드레일) → orchestrator(라우팅 규칙).
     # orchestrator.md 는 오케스트레이터 호출 시에만 포함 (서브 에이전트에는 제외).
+    # 이 세 파일 외에 PROMPTS/ 에 추가된 .md 파일은 동적으로 뒤에 이어 붙는다.
     _ORDERED_FILES: tuple[str, ...] = ("base.md", "safety.md", "orchestrator.md")
     _ORCHESTRATOR_ONLY: frozenset[str] = frozenset({"orchestrator.md"})
 
@@ -33,16 +34,29 @@ class PromptRegistry:
 
     def load(self) -> None:
         """부팅 시 명시 호출용. dev 에서도 첫 1회는 미리 캐시해 두면 좋다."""
+        fixed_count = 0
         for name in self._ORDERED_FILES:
             self._read(self._dir / name)
+            if (self._dir / name).exists():
+                fixed_count += 1
+
+        dynamic = self._dynamic_files()
+        for path in dynamic:
+            self._read(path)
+
         logger.info(
-            "prompts loaded from %s (%d files)",
+            "prompts loaded from %s (%d fixed + %d dynamic files)",
             self._dir,
-            sum(1 for n in self._ORDERED_FILES if (self._dir / n).exists()),
+            fixed_count,
+            len(dynamic),
         )
 
     def compose(self, fallback: str = "", include_orchestrator: bool = True) -> str:
         """합성된 베이스 텍스트. 모두 비어 있으면 fallback 을 반환.
+
+        고정 순서(base → safety → orchestrator) 뒤에 PROMPTS/ 의 나머지 .md 파일을
+        파일명 오름차순으로 동적 삽입한다. 도메인 배경 지식·용어 문서 등을 파일만
+        추가해 주입할 때 활용한다.
 
         Args:
             fallback: 모든 파일이 비어 있을 때 반환할 폴백 문자열.
@@ -50,13 +64,27 @@ class PromptRegistry:
                 4단계 라우팅 규칙을 받지 않아야 한다 (자신이 또 위임을 시도하는 것을 방지).
         """
         parts: list[str] = []
+
         for name in self._ORDERED_FILES:
             if not include_orchestrator and name in self._ORCHESTRATOR_ONLY:
                 continue
             text = self._read(self._dir / name)
             if text:
                 parts.append(text)
+
+        for path in self._dynamic_files():
+            text = self._read(path)
+            if text:
+                parts.append(text)
+
         return "\n\n".join(parts) or fallback
+
+    def _dynamic_files(self) -> list[Path]:
+        """고정 파일 외의 .md 파일을 파일명 오름차순으로 반환한다."""
+        if not self._dir.exists():
+            return []
+        fixed = set(self._ORDERED_FILES)
+        return sorted(p for p in self._dir.glob("*.md") if p.name not in fixed)
 
     # ------------------------------------------------------------------ #
     # 내부 헬퍼

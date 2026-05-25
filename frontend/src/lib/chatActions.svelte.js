@@ -211,9 +211,10 @@ export async function sendMessage(text) {
     activeSkills: forced, // string[] | null — skill_active 이벤트로 채워진다
     reasoning: "",        // ReasoningEvent 청크가 누적되는 추론 텍스트
     todos: null,          // TodoUpdateEvent 로 갱신되는 TodoItem[] | null
+    skillComplete: null,  // SkillCompleteEvent 로 설정되는 {completed, failed, skipped} | null
     askUser: null,        // AskUserEvent 로 설정되는 슬롯 질문 | null
-    agentTrail: [],       // {from, to, summary?} — agent:switch / agent:return chip
-    agentProgress: [],    // {agentId, deltas, toolStatus} — 서브 에이전트 진행 영역
+    agentTrail: [],       // {from, to, reason, summary, todoLog, toolCallsCount, errorCount}
+    agentProgress: [],    // {agentId, deltas, toolStatus, todos, skillComplete}
     createdAt: now,
   };
 
@@ -281,6 +282,16 @@ export async function sendMessage(text) {
     scheduleSave();
   };
 
+  const setSkillComplete = (data) => {
+    const s = activeSession();
+    if (!s) return;
+    const last = s.messages[s.messages.length - 1];
+    if (!last || last.role !== "assistant") return;
+    last.skillComplete = data;
+    ui.sessions = [...ui.sessions];
+    scheduleSave();
+  };
+
   const setAskUser = (payload) => {
     const s = activeSession();
     if (!s) return;
@@ -305,26 +316,43 @@ export async function sendMessage(text) {
     // 새 progress 슬롯도 미리 열어 둔다 (delta 누적용).
     last.agentProgress = [
       ...(last.agentProgress ?? []),
-      { agentId: to, deltas: "", toolStatus: null },
+      { agentId: to, deltas: "", toolStatus: null, todos: null, skillComplete: null },
     ];
     ui.sessions = [...ui.sessions];
     scheduleSave();
   };
 
-  // AgentReturnEvent → trail 의 마지막 항목 summary 채움
-  const pushAgentReturn = (from, summary) => {
+  // AgentReturnEvent → trail 의 마지막 항목 summary + todo_log 채움.
+  // todo_log 가 있으면 progress 슬롯 todos 도 동기화 (todo_update 미수신 시 fallback).
+  const pushAgentReturn = (from, summary, todoLog, toolCallsCount, errorCount) => {
     const s = activeSession();
     if (!s) return;
     const last = s.messages[s.messages.length - 1];
     if (!last || last.role !== "assistant") return;
+
     const trail = [...(last.agentTrail ?? [])];
     for (let i = trail.length - 1; i >= 0; i--) {
       if (trail[i].to === from && trail[i].summary == null) {
-        trail[i] = { ...trail[i], summary };
+        trail[i] = { ...trail[i], summary, todoLog: todoLog ?? [], toolCallsCount: toolCallsCount ?? 0, errorCount: errorCount ?? 0 };
         break;
       }
     }
     last.agentTrail = trail;
+
+    // progress 슬롯 todos fallback — todo_update 없이 완료된 경우 보완.
+    if (todoLog && todoLog.length > 0) {
+      const progress = [...(last.agentProgress ?? [])];
+      for (let i = progress.length - 1; i >= 0; i--) {
+        if (progress[i].agentId === from) {
+          if (!progress[i].todos || progress[i].todos.length === 0) {
+            progress[i] = { ...progress[i], todos: todoLog };
+            last.agentProgress = progress;
+          }
+          break;
+        }
+      }
+    }
+
     ui.sessions = [...ui.sessions];
     scheduleSave();
   };
@@ -345,7 +373,7 @@ export async function sendMessage(text) {
       }
     }
     if (slotIdx === -1) {
-      progress.push({ agentId, deltas: "", toolStatus: null });
+      progress.push({ agentId, deltas: "", toolStatus: null, todos: null, skillComplete: null });
       slotIdx = progress.length - 1;
     }
     const slot = { ...progress[slotIdx] };
@@ -354,10 +382,19 @@ export async function sendMessage(text) {
     } else if (innerType === "tool_call") {
       slot.toolStatus = `🔧 ${innerPayload.call?.name ?? "?"} 호출 중...`;
     } else if (innerType === "tool_result") {
-      slot.toolStatus = `🔧 ${innerPayload.name ?? "?"} → ${innerPayload.result ?? ""}`;
+      const prefix = innerPayload.is_error ? "⚠️" : "🔧";
+      slot.toolStatus = `${prefix} ${innerPayload.name ?? "?"} → ${innerPayload.result ?? ""}`;
     } else if (innerType === "reasoning") {
       // 추론은 deltas 와 별도로 다루지 않고 prefix 로만 시각 구분.
       slot.deltas += `\n[reasoning] ${innerPayload.content ?? ""}`;
+    } else if (innerType === "todo_update") {
+      slot.todos = innerPayload.todos ?? [];
+    } else if (innerType === "skill_complete") {
+      slot.skillComplete = {
+        completed: innerPayload.completed ?? 0,
+        failed: innerPayload.failed ?? 0,
+        skipped: innerPayload.skipped ?? 0,
+      };
     }
     progress[slotIdx] = slot;
     last.agentProgress = progress;
@@ -385,7 +422,9 @@ export async function sendMessage(text) {
       } else if (ev.type === "tool_call") {
         setToolStatus(`🔧 ${ev.call.name} 호출 중...`);
       } else if (ev.type === "tool_result") {
-        setToolStatus(`🔧 ${ev.name} → ${ev.result}`);
+        // is_error 면 시각적으로 구분. data 필드는 향후 inspector UI 에서 활용 예정.
+        const prefix = ev.is_error ? "⚠️" : "🔧";
+        setToolStatus(`${prefix} ${ev.name} → ${ev.result}`);
       } else if (ev.type === "skill_active") {
         setActiveSkills(ev.skills);
       } else if (ev.type === "error") {
@@ -394,18 +433,22 @@ export async function sendMessage(text) {
         appendReasoning(ev.content);
       } else if (ev.type === "todo_update") {
         setTodos(ev.todos);
+      } else if (ev.type === "skill_complete") {
+        setSkillComplete({ completed: ev.completed, failed: ev.failed, skipped: ev.skipped });
       } else if (ev.type === "ask_user") {
         setAskUser({
           question: ev.question,
           slot_key: ev.slot_key,
           options: ev.options ?? null,
           tool_name: ev.tool_name ?? null,
+          // 백엔드가 명시한 input_type 을 신뢰하되, 누락 시 options 유무로 폴백.
+          input_type: ev.input_type ?? (ev.options ? "both" : "text"),
           answered: false,
         });
       } else if (ev.type === "agent:switch") {
         pushAgentSwitch(ev.from_agent, ev.to_agent, ev.reason ?? "");
       } else if (ev.type === "agent:return") {
-        pushAgentReturn(ev.from_agent, ev.summary ?? "");
+        pushAgentReturn(ev.from_agent, ev.summary ?? "", ev.todo_log ?? [], ev.tool_calls_count ?? 0, ev.error_count ?? 0);
       } else if (ev.type === "agent:progress") {
         handleAgentProgress(ev.agent_id, ev.inner_type, ev.inner_payload ?? {});
       }

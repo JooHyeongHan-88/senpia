@@ -24,6 +24,7 @@ run_turn 한 번 = 사용자 입력 1건에 대한 응답 1턴.
     - 서브 에이전트의 상세 메시지는 ConversationStore 에 영속화하지 않음 (컨텍스트 격리)
 """
 
+import asyncio
 import logging
 import uuid
 from collections.abc import AsyncIterator
@@ -31,7 +32,7 @@ from dataclasses import dataclass
 from typing import Any, ClassVar
 
 from agent.config import MAX_AGENT_DEPTH
-from agent.guard import check_required_slots
+from agent.guard import validate_tool_args
 from agent.models import (
     AgentProgressEvent,
     AgentReturnEvent,
@@ -44,12 +45,14 @@ from agent.models import (
     Message,
     ReasoningEvent,
     SkillActiveEvent,
+    SkillCompleteEvent,
     StreamEvent,
     TodoItem,
     TodoStatus,
     TodoUpdateEvent,
     ToolCall,
     ToolCallEvent,
+    ToolResult,
     ToolResultEvent,
     ToolSpec,
 )
@@ -57,6 +60,8 @@ from agent.registries.agents import Agent, AgentRegistry
 from agent.registries.prompts import PromptRegistry
 from agent.registries.skills import Skill, SkillRegistry
 from agent.registries.tools import (
+    ASK_USER,
+    COMPLETE_SUB_AGENT,
     PLANNER_ADD_TODO,
     PLANNER_COMPLETE_TODO,
     SUB_AGENT_DISPATCH,
@@ -69,6 +74,11 @@ logger = logging.getLogger(__name__)
 
 ORCHESTRATOR_ID = "orchestrator"
 TASK_SUMMARY_HEADER = "Task Summary:"
+
+# todo 가 더 이상 진행되지 않는 최종 상태.
+_TERMINAL_STATUSES: frozenset[TodoStatus] = frozenset(
+    {TodoStatus.COMPLETED, TodoStatus.FAILED, TodoStatus.SKIPPED}
+)
 
 
 # ---------------------------------------------------------------------------
@@ -193,6 +203,10 @@ async def run_turn(
                 state,
             )
 
+        # pending_question 은 직전 턴 ask_user 의 잔재 — 시스템 프롬프트에 1회 주입됐으면
+        # 즉시 클리어해야 같은 질문이 두 턴 연속 컨텍스트에 남지 않는다.
+        state.pending_question = None
+
         messages: list[Message] = [
             Message(role="system", content=composed_system),
             *history,
@@ -205,12 +219,14 @@ async def run_turn(
         if state.todo_list:
             yield TodoUpdateEvent(todos=list(state.todo_list))
 
-        # 오케스트레이터는 전체 도구 노출. (AGENTS 없으면 call_sub_agent 도 제거.)
-        orchestrator_specs = (
-            registry.specs()
-            if has_agents
-            else [s for s in registry.specs() if s.name != SUB_AGENT_DISPATCH]
-        )
+        # 오케스트레이터: COMPLETE_SUB_AGENT 는 서브 에이전트 전용이라 숨김.
+        # AGENTS 없으면 SUB_AGENT_DISPATCH 도 제거.
+        orchestrator_specs = [
+            s
+            for s in registry.specs()
+            if s.name != COMPLETE_SUB_AGENT
+            and (has_agents or s.name != SUB_AGENT_DISPATCH)
+        ]
 
         budget = TurnBudget(max_calls=max_agent_calls)
 
@@ -336,7 +352,16 @@ async def _run_agent_turn(
 
         interrupted = False
         for call in pending_tool_calls:
-            # PLANNER 도구는 state 가 있을 때만 (서브 에이전트는 state=None).
+            # complete_subagent — 서브 에이전트 종료 sentinel (turn_messages=None 이 서브 에이전트 지표).
+            if call.name == COMPLETE_SUB_AGENT and turn_messages is None:
+                result_text = (call.arguments or {}).get("summary", "")
+                _append_tool_result(messages, turn_messages, call, result_text)
+                yield ToolResultEvent(
+                    tool_call_id=call.id, name=call.name, result=result_text
+                )
+                return  # 서브 에이전트 완료 — _dispatch_sub_agent 가 ToolResultEvent 를 캡처
+
+            # PLANNER 도구는 state 가 있을 때만 (서브 에이전트도 sub_state 가 주입되므로 동작함).
             if call.name == PLANNER_ADD_TODO and state is not None:
                 result_text = _handle_add_todo(state, call.arguments)
                 _append_tool_result(messages, turn_messages, call, result_text)
@@ -353,11 +378,45 @@ async def _run_agent_turn(
                     tool_call_id=call.id, name=call.name, result=result_text
                 )
                 yield TodoUpdateEvent(todos=list(state.todo_list))
+                if _all_todos_terminal(state):
+                    yield _build_skill_complete_event(state)
                 continue
+
+            # ask_user sentinel — LLM 능동 보완 질문. tool_result placeholder 한 줄 + AskUserEvent 후 turn 중단.
+            if call.name == ASK_USER:
+                args = call.arguments or {}
+                question = (args.get("question") or "").strip()
+                options = args.get("options")
+                input_type = args.get("input_type", "both")
+
+                # 정규화: options 가 비어 있으면 자유입력만, 비정상 input_type 은 both 로 폴백.
+                if not options:
+                    options = None
+                    input_type = "text"
+                elif input_type not in ("choice", "text", "both"):
+                    input_type = "both"
+
+                if state is not None:
+                    state.pending_question = question
+
+                placeholder = f"[ask_user] 사용자에게 질문을 던졌습니다: {question}"
+                _append_tool_result(messages, turn_messages, call, placeholder)
+                yield ToolResultEvent(
+                    tool_call_id=call.id, name=call.name, result=placeholder
+                )
+                yield AskUserEvent(
+                    question=question,
+                    slot_key=ASK_USER,
+                    options=options,
+                    tool_name=ASK_USER,
+                    input_type=input_type,
+                )
+                interrupted = True
+                break
 
             # 서브 에이전트 디스패치 — async generator nesting 으로 통과.
             if call.name == SUB_AGENT_DISPATCH and agent_registry is not None:
-                guard = check_required_slots(call.arguments, registry.get(call.name))
+                guard = validate_tool_args(call.arguments, registry.get(call.name))
                 if not guard.ok:
                     first = guard.missing[0]
                     if state is not None:
@@ -375,6 +434,7 @@ async def _run_agent_turn(
                         slot_key=first.key,
                         options=first.options,
                         tool_name=call.name,
+                        input_type="both" if first.options else "text",
                     )
                     interrupted = True
                     break
@@ -383,6 +443,7 @@ async def _run_agent_turn(
                     f"[error] {call.arguments.get('agent_name', '?')}: "
                     "sub-agent 가 요약을 반환하지 않음"
                 )
+                sub_interrupted = False
                 async for sub_ev in _dispatch_sub_agent(
                     call=call,
                     parent_agent_id=agent_id,
@@ -394,10 +455,27 @@ async def _run_agent_turn(
                     budget=budget,
                     depth=depth + 1,
                     max_iterations=max_iterations,
+                    orchestrator_state=state,
                 ):
                     yield sub_ev
                     if isinstance(sub_ev, AgentReturnEvent):
-                        captured_summary = sub_ev.summary
+                        # todo_log 와 통계를 포함한 구조화 텍스트로 LLM 컨텍스트에 주입.
+                        captured_summary = _format_sub_agent_result(sub_ev)
+                    elif isinstance(sub_ev, AskUserEvent):
+                        # 서브 에이전트 슬롯 부족 — 사용자 질문을 그대로 전달 후 중단.
+                        sub_interrupted = True
+
+                if sub_interrupted:
+                    interrupted = True
+                    break
+
+                # 성공적 완료 — pending_sub_agent 초기화
+                if state is not None:
+                    dispatched_name = (call.arguments or {}).get("agent_name")
+                    if state.pending_sub_agent == dispatched_name:
+                        state.pending_sub_agent = None
+                        state.pending_sub_task = None
+                        state.missing_slots = {}
 
                 _append_tool_result(messages, turn_messages, call, captured_summary)
                 yield ToolResultEvent(
@@ -406,7 +484,7 @@ async def _run_agent_turn(
                 continue
 
             tool = registry.get(call.name)
-            guard = check_required_slots(call.arguments, tool)
+            guard = validate_tool_args(call.arguments, tool)
             if not guard.ok:
                 first = guard.missing[0]
                 if state is not None:
@@ -424,18 +502,29 @@ async def _run_agent_turn(
                     slot_key=first.key,
                     options=first.options,
                     tool_name=call.name,
+                    input_type="both" if first.options else "text",
                 )
                 interrupted = True
                 break
 
-            result_text = await _execute_tool(call, registry)
-            _append_tool_result(messages, turn_messages, call, result_text)
+            result = await _execute_tool(call, registry)
+            _append_tool_result(messages, turn_messages, call, result.content)
             yield ToolResultEvent(
-                tool_call_id=call.id, name=call.name, result=result_text
+                tool_call_id=call.id,
+                name=call.name,
+                result=result.content,
+                data=result.data,
+                is_error=result.is_error,
             )
 
             if state is not None:
-                _mark_running_todo_done(state, call.name, result_text)
+                todo_updated = _mark_running_todo_done(
+                    state, call.name, result.content, is_error=result.is_error
+                )
+                if todo_updated:
+                    yield TodoUpdateEvent(todos=list(state.todo_list))
+                    if _all_todos_terminal(state):
+                        yield _build_skill_complete_event(state)
                 if state.pending_tool == call.name:
                     state.pending_tool = None
                     state.pending_args = {}
@@ -444,11 +533,16 @@ async def _run_agent_turn(
         if interrupted:
             return
     else:
+        msg = (
+            f"[max_iterations] {agent_id}: {max_iterations}회 반복 상한에 도달했습니다. "
+            "작업이 완전히 완료되지 않았을 수 있습니다."
+        )
         logger.warning(
             "agent harness reached max_iterations=%d (agent=%s)",
             max_iterations,
             agent_id,
         )
+        yield ErrorEvent(message=msg)
 
 
 # ---------------------------------------------------------------------------
@@ -468,11 +562,16 @@ async def _dispatch_sub_agent(
     budget: TurnBudget,
     depth: int,
     max_iterations: int,
+    orchestrator_state: AgentState | None = None,
 ) -> AsyncIterator[StreamEvent]:
     """서브 에이전트 turn 을 격리된 컨텍스트에서 실행.
 
     AgentSwitch → AgentProgress×N → AgentReturn 순으로 yield. 부모 _run_agent_turn
     이 AgentReturnEvent.summary 를 캡처해 tool_result 로 변환한다.
+
+    슬롯 부족(AskUserEvent) 발생 시: orchestrator_state 에 pending_sub_agent 저장 후
+    AskUserEvent 를 직접 yield — AgentReturnEvent 없이 종료. 부모 _run_agent_turn
+    이 AskUserEvent 를 감지해 해당 턴을 interrupted 처리한다.
     """
     agent_name = (call.arguments or {}).get("agent_name", "")
     task = (call.arguments or {}).get("task", "")
@@ -516,7 +615,13 @@ async def _dispatch_sub_agent(
     ]
     sub_specs = _filter_specs_for_sub_agent(registry.specs(), agent)
 
+    # 서브 에이전트 전용 로컬 상태 — PLANNER 도구 지원용. 디스크에 영속화하지 않음.
+    sub_state = AgentState()
+
+    complete_subagent_summary: str | None = None
     last_assistant_text: list[str] = []
+    tool_calls_count = 0
+    error_count_tracker = 0
     async for ev in _run_agent_turn(
         agent_id=agent.meta.name,
         messages=sub_messages,
@@ -529,7 +634,7 @@ async def _dispatch_sub_agent(
         skill_registry=skill_registry,
         budget=budget,
         depth=depth,
-        state=None,
+        state=sub_state,
         max_iterations=max_iterations,
     ):
         if isinstance(ev, DeltaEvent):
@@ -541,7 +646,38 @@ async def _dispatch_sub_agent(
             )
             continue
 
-        if isinstance(ev, (ToolCallEvent, ToolResultEvent, ReasoningEvent)):
+        if isinstance(ev, ToolResultEvent) and ev.name == COMPLETE_SUB_AGENT:
+            # complete_subagent 호출 결과 캡처 — text parsing 대체.
+            complete_subagent_summary = ev.result
+            yield AgentProgressEvent(
+                agent_id=agent.meta.name,
+                inner_type=ev.type,
+                inner_payload=ev.model_dump(exclude={"type"}),
+            )
+            continue
+
+        if isinstance(ev, ToolResultEvent):
+            # complete_subagent 외 일반 도구 실행 통계 누적.
+            tool_calls_count += 1
+            if ev.is_error:
+                error_count_tracker += 1
+            yield AgentProgressEvent(
+                agent_id=agent.meta.name,
+                inner_type=ev.type,
+                inner_payload=ev.model_dump(exclude={"type"}),
+            )
+            continue
+
+        if isinstance(ev, (ToolCallEvent, ReasoningEvent)):
+            yield AgentProgressEvent(
+                agent_id=agent.meta.name,
+                inner_type=ev.type,
+                inner_payload=ev.model_dump(exclude={"type"}),
+            )
+            continue
+
+        if isinstance(ev, (TodoUpdateEvent, SkillCompleteEvent)):
+            # 서브 에이전트의 PLANNER 상태 변화와 SKILL 완료 신호를 프론트에 전달.
             yield AgentProgressEvent(
                 agent_id=agent.meta.name,
                 inner_type=ev.type,
@@ -550,15 +686,18 @@ async def _dispatch_sub_agent(
             continue
 
         if isinstance(ev, AskUserEvent):
-            # J-2: 서브 에이전트 슬롯 가드 발동 — 작업 포기, 요약에 명시.
-            yield AgentReturnEvent(
-                from_agent=agent.meta.name,
-                summary=(
-                    f"[interrupted] {agent.meta.name} 가 필수 정보 부족으로 작업을 "
-                    f"완료할 수 없음: {ev.question}"
-                ),
-            )
-            return
+            # 슬롯 부족 또는 ask_user 능동 호출 — orchestrator 에 pending 저장 후 사용자에게 직접 질문.
+            if orchestrator_state is not None:
+                orchestrator_state.pending_sub_agent = agent.meta.name
+                orchestrator_state.pending_sub_task = task
+                orchestrator_state.missing_slots = {ev.slot_key: ev.question}
+                orchestrator_state.pending_tool = None
+                orchestrator_state.pending_args = {}
+                # 서브 에이전트가 ask_user sentinel 을 직접 호출한 경우 질문 본문도 기록.
+                if ev.tool_name == ASK_USER:
+                    orchestrator_state.pending_question = ev.question
+            yield ev  # 사용자에게 직접 노출
+            return  # AgentReturnEvent 없이 종료 — 부모가 AskUserEvent 를 감지
 
         if isinstance(ev, ErrorEvent):
             yield AgentReturnEvent(
@@ -567,13 +706,18 @@ async def _dispatch_sub_agent(
             )
             return
 
-        # 그 외(SkillActiveEvent / TodoUpdateEvent 등)는 서브에선 발생하지 않으나
-        # 안전을 위해 silent drop. (state=None 이므로 도달하지 않음.)
+        # 그 외(SkillActiveEvent 등)는 silent drop.
 
-    summary = _extract_task_summary(
+    summary = complete_subagent_summary or _extract_task_summary(
         "".join(last_assistant_text).strip(), agent.meta.name
     )
-    yield AgentReturnEvent(from_agent=agent.meta.name, summary=summary)
+    yield AgentReturnEvent(
+        from_agent=agent.meta.name,
+        summary=summary,
+        todo_log=list(sub_state.todo_list),
+        tool_calls_count=tool_calls_count,
+        error_count=error_count_tracker,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -611,7 +755,19 @@ def _compose_orchestrator_system_prompt(
         )
         parts.append(f"\n# 현재 To-do\n{rendered}")
 
-    if state.pending_tool and state.missing_slots:
+    # 서브 에이전트 pending 이 오케스트레이터 자체 pending 보다 우선.
+    if state.pending_sub_agent and state.missing_slots:
+        first_q = next(iter(state.missing_slots.values()))
+        parts.append(
+            "\n# Pending Sub-Agent Slot\n"
+            f"직전 턴에 `{state.pending_sub_agent}` 서브 에이전트가 작업 중 "
+            f"필요한 정보를 사용자에게 질문했습니다: '{first_q}'.\n"
+            f"원래 위임 task: '{state.pending_sub_task}'.\n"
+            "사용자의 이번 메시지가 그 응답이라면 즉시 `call_sub_agent` 로 해당 에이전트에게 "
+            "사용자가 제공한 정보를 포함해 재위임하세요. "
+            "새 주제 전환이면 이 pending 상태를 무시하고 새 요청을 처리하세요."
+        )
+    elif state.pending_tool and state.missing_slots:
         first_q = next(iter(state.missing_slots.values()))
         parts.append(
             "\n# Pending Slot\n"
@@ -620,6 +776,15 @@ def _compose_orchestrator_system_prompt(
             f"부분적으로 채워진 인자: {state.pending_args}.\n"
             "사용자의 이번 메시지가 그 질문에 대한 응답이면 같은 도구를 채워서 다시 호출하세요. "
             "새 주제로 전환된 메시지라면 이 pending 호출을 폐기하고 새 요청을 처리하세요."
+        )
+    elif state.pending_question:
+        # ask_user sentinel 로 능동 질문을 던진 직후 — 사용자의 이번 메시지가 그 답변이다.
+        parts.append(
+            "\n# Pending User Question\n"
+            f"당신은 직전 턴에 사용자에게 다음을 질문했습니다: '{state.pending_question}'.\n"
+            "이번 메시지가 그 질문에 대한 답변이라고 가정하고, 받은 답변을 활용해 작업을 이어가세요. "
+            "답변이 여전히 모호하면 다시 `ask_user` 를 호출해도 되지만 같은 질문 반복은 금지합니다 — "
+            "그 경우엔 가장 합리적인 해석으로 진행하고 결과 보고에서 그 가정을 명시하세요."
         )
 
     metas = agent_registry.list_meta()
@@ -665,13 +830,10 @@ def _compose_sub_agent_system_prompt(
         parts.append(f"\n# 학습 Skill: {s.meta.name}\n{s.body}")
     parts.append(
         "\n# 종료 규약 (필수)\n"
-        "작업을 마무리할 때 응답의 마지막 단락은 반드시 다음 형식이어야 한다:\n"
-        "```\n"
-        "Task Summary:\n"
-        "- 수행한 작업 요약 1~3줄\n"
-        "- 발견한 핵심 사실 또는 다음 단계 제안\n"
-        "```\n"
-        "이 헤더가 없으면 오케스트레이터가 결과를 인식하지 못한다."
+        "작업을 완료했으면 반드시 `complete_subagent` 도구를 호출해 결과를 반환하라.\n"
+        "summary 파라미터에 수행한 내용과 핵심 결과를 1~3문장으로 기술한다.\n"
+        "`complete_subagent` 를 호출하지 않으면 오케스트레이터가 결과를 인식하지 못하므로 "
+        "작업 완료 시 마지막 액션으로 반드시 호출해야 한다."
     )
     return "\n".join(parts)
 
@@ -690,14 +852,15 @@ def _filter_specs_for_sub_agent(
 
     금지 도구:
         - SUB_AGENT_DISPATCH: 무한 재귀 방지 (depth-guard 가 2차 안전망).
-        - PLANNER_ADD_TODO / PLANNER_COMPLETE_TODO: state=None 이라 의미 없음.
+    허용 도구:
+        - COMPLETE_SUB_AGENT: 서브 에이전트가 완료 시 반드시 호출해야 함.
+        - PLANNER_ADD_TODO / PLANNER_COMPLETE_TODO: 서브 에이전트도 자체 작업을
+          분해할 수 있도록 허용. sub_state(로컬) 로 관리되므로 오케스트레이터와 분리.
     화이트리스트:
         - agent.meta.tools 비어 있으면 위 금지 외 전체.
         - 비어있지 않으면 그 화이트리스트만 (단 금지 도구는 항상 제외).
     """
-    forbidden: frozenset[str] = frozenset(
-        {SUB_AGENT_DISPATCH, PLANNER_ADD_TODO, PLANNER_COMPLETE_TODO}
-    )
+    forbidden: frozenset[str] = frozenset({SUB_AGENT_DISPATCH})
     allowed = set(agent.meta.tools)
     out: list[ToolSpec] = []
     for spec in all_specs:
@@ -707,6 +870,61 @@ def _filter_specs_for_sub_agent(
             continue
         out.append(spec)
     return out
+
+
+def _all_todos_terminal(state: AgentState) -> bool:
+    """todo_list 가 비어 있지 않고 모든 항목이 terminal 상태인지 확인한다."""
+    return bool(state.todo_list) and all(
+        item.status in _TERMINAL_STATUSES for item in state.todo_list
+    )
+
+
+def _build_skill_complete_event(state: AgentState) -> SkillCompleteEvent:
+    """AgentState 의 todo_list 통계로 SkillCompleteEvent 를 생성한다."""
+    return SkillCompleteEvent(
+        completed=sum(1 for t in state.todo_list if t.status == TodoStatus.COMPLETED),
+        failed=sum(1 for t in state.todo_list if t.status == TodoStatus.FAILED),
+        skipped=sum(1 for t in state.todo_list if t.status == TodoStatus.SKIPPED),
+    )
+
+
+def _format_sub_agent_result(event: AgentReturnEvent) -> str:
+    """AgentReturnEvent 를 오케스트레이터 LLM 컨텍스트용 구조화 텍스트로 변환.
+
+    todo_log 가 있으면 단계별 성공/실패 기록을 포함하고, 없으면 도구 호출 통계만
+    추가한다. 오케스트레이터는 이 텍스트를 tool_result 로 받아 Case 5 보고에 활용한다.
+    """
+    lines: list[str] = [f"[{event.from_agent} 완료] {event.summary}"]
+
+    status_icon: dict[str, str] = {
+        TodoStatus.COMPLETED.value: "✓",
+        TodoStatus.FAILED.value: "✗",
+        TodoStatus.SKIPPED.value: "–",
+    }
+
+    if event.todo_log:
+        n_completed = sum(1 for t in event.todo_log if t.status == TodoStatus.COMPLETED)
+        n_failed = sum(1 for t in event.todo_log if t.status == TodoStatus.FAILED)
+        n_skipped = sum(1 for t in event.todo_log if t.status == TodoStatus.SKIPPED)
+
+        stat_parts = [f"완료 {n_completed}"]
+        if n_failed:
+            stat_parts.append(f"실패 {n_failed}")
+        if n_skipped:
+            stat_parts.append(f"건너뜀 {n_skipped}")
+
+        lines.append(f"실행 단계: {len(event.todo_log)}개 ({' · '.join(stat_parts)})")
+        for item in event.todo_log:
+            icon = status_icon.get(item.status.value, "?")
+            detail = f": {item.result_summary}" if item.result_summary else ""
+            lines.append(f"  [{icon}] {item.description}{detail}")
+    elif event.tool_calls_count > 0:
+        stat = f"도구 호출: {event.tool_calls_count}건"
+        if event.error_count:
+            stat += f" (실패 {event.error_count}건)"
+        lines.append(stat)
+
+    return "\n".join(lines)
 
 
 def _extract_task_summary(full_text: str, agent_name: str) -> str:
@@ -811,31 +1029,54 @@ def _handle_add_todo(state: AgentState, args: dict[str, Any]) -> str:
 
 
 def _handle_complete_todo(state: AgentState, args: dict[str, Any]) -> str:
-    """complete_todo 호출을 받아 task_id 매칭 todo 의 status 를 COMPLETED 로 갱신."""
+    """complete_todo 호출을 받아 task_id 매칭 todo 의 status 를 갱신.
+
+    status 파라미터로 completed / failed / skipped 를 지정할 수 있다.
+    잘못된 값이 오면 completed 로 폴백해 LLM 오타에 관대하게 처리한다.
+    """
     task_id = (args.get("task_id") or "").strip()
     summary = (args.get("summary") or "").strip() or None
+    raw_status = (args.get("status") or "completed").strip().lower()
+
+    status_map = {
+        "completed": TodoStatus.COMPLETED,
+        "failed": TodoStatus.FAILED,
+        "skipped": TodoStatus.SKIPPED,
+    }
+    new_status = status_map.get(raw_status, TodoStatus.COMPLETED)
 
     if not task_id:
         return "[planner] complete_todo: task_id 누락"
 
     for item in state.todo_list:
         if item.task_id == task_id:
-            item.status = TodoStatus.COMPLETED
+            item.status = new_status
             item.result_summary = summary
-            return f"[planner] completed: {task_id}"
+            return f"[planner] {new_status.value}: {task_id}"
 
     return f"[planner] complete_todo: task_id '{task_id}' 를 찾을 수 없음"
 
 
 def _mark_running_todo_done(
-    state: AgentState, tool_name: str, result_text: str
-) -> None:
-    """일반 도구가 실행되면 같은 tool_name 으로 마킹된 RUNNING todo 를 자동 완료한다."""
+    state: AgentState, tool_name: str, result_text: str, *, is_error: bool = False
+) -> bool:
+    """일반 도구 실행 결과를 같은 tool_name 의 활성 todo 에 자동 반영한다.
+
+    PENDING 또는 RUNNING 중 tool_name 이 일치하는 첫 항목을 갱신한다.
+    is_error=True 면 FAILED, 아니면 COMPLETED 로 전이한다.
+
+    Returns:
+        True: todo 가 실제로 갱신된 경우 (호출자가 TodoUpdateEvent 를 yield 해야 함).
+        False: 일치하는 항목 없음.
+    """
+    target_statuses = {TodoStatus.PENDING, TodoStatus.RUNNING}
+    new_status = TodoStatus.FAILED if is_error else TodoStatus.COMPLETED
     for item in state.todo_list:
-        if item.status == TodoStatus.RUNNING and item.tool_name == tool_name:
-            item.status = TodoStatus.COMPLETED
+        if item.status in target_statuses and item.tool_name == tool_name:
+            item.status = new_status
             item.result_summary = result_text[:120]
-            return
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -863,15 +1104,46 @@ def _append_tool_result(
         turn_messages.append(tool_msg)
 
 
-async def _execute_tool(call: ToolCall, registry: ToolRegistry) -> str:
+async def _execute_tool(call: ToolCall, registry: ToolRegistry) -> ToolResult:
+    """등록된 도구를 timeout 안에서 실행해 ToolResult 로 표준화한다.
+
+    반환 규약:
+        - 도구가 str 반환 → ToolResult(content=str)
+        - 도구가 ToolResult 반환 → 그대로
+        - timeout / ValueError / KeyError / TypeError → is_error=True ToolResult
+        - sentinel 도구가 여기까지 흘러온 경우 (harness 분기 누락) → 명시적 에러
+    """
     tool = registry.get(call.name)
     if tool is None:
-        return f"[error] unknown tool: {call.name}"
+        return ToolResult(content=f"[error] unknown tool: {call.name}", is_error=True)
+
+    if tool.sentinel:
+        # harness 분기가 누락된 프로그래밍 버그 — 조용히 통과하지 말 것.
+        return ToolResult(
+            content=f"[error] sentinel tool '{call.name}' bypassed harness intercept",
+            is_error=True,
+        )
 
     try:
-        return await tool.run(call.arguments)
+        result = await asyncio.wait_for(
+            tool.fn(**(call.arguments or {})), timeout=tool.timeout_seconds
+        )
+    except asyncio.TimeoutError:
+        return ToolResult(
+            content=f"[timeout] {call.name} exceeded {tool.timeout_seconds}s",
+            is_error=True,
+        )
     except (ValueError, KeyError, TypeError) as exc:
-        return f"[error] {type(exc).__name__}: {exc}"
+        return ToolResult(content=f"[error] {type(exc).__name__}: {exc}", is_error=True)
+
+    if isinstance(result, ToolResult):
+        return result
+    if isinstance(result, str):
+        return ToolResult(content=result)
+    # 도구가 dict 등 임의 객체를 돌려주면 문자열화해 LLM 컨텍스트에 안전 전달.
+    return ToolResult(
+        content=str(result), data={"raw": result} if isinstance(result, dict) else None
+    )
 
 
 __all__ = ["run_turn", "TurnBudget", "ORCHESTRATOR_ID"]

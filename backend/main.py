@@ -5,6 +5,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+import agent.tools  # noqa: F401 — @register_tool 데코레이터 자기등록 트리거
 from agent.registries.agents import registry as agent_registry
 from agent.registries.prompts import registry as prompt_registry
 from agent.registries.skills import registry as skill_registry

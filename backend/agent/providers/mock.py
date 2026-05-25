@@ -1,16 +1,22 @@
 """Mock LLM provider for UI validation without real API calls.
 
 지원하는 시나리오 (SKILLS / AGENTS 라우팅 검증용):
-    1. now tool       — "지금 몇 시", "현재 시각" 등 → now 도구 호출 → 시각 응답
-    2. add_todo       — "보고서", "리포트", "report" → add_todo 3-step 플래너
-    3. search         — "검색", "데이터 조회" → demo_search (빈 인자) → AskUserEvent
-    4. reasoning      — "생각해", "추론" → ReasoningEvent 청크 → DeltaEvent 응답
-    5. full report    — "전체 보고서" → add_todo 3개 → complete_todo 순차 실행
-    6. 명시 위임      — "코딩 에이전트", "리서치 에이전트" → call_sub_agent (Case 2)
-    7. 체이닝         — "전체 분석" → coding_agent → research_agent 순차 위임
-    8. 서브 에이전트  — system 메시지에 "당신은 '<name>' 서브 에이전트" 포함 시 분기
-                        (오케스트레이터가 _dispatch_sub_agent 로 호출한 격리된 turn)
-    9. 기본 echo      — 위 트리거가 없으면 메시지를 그대로 echo
+    1.  now tool       — "지금 몇 시", "현재 시각" 등 → now 도구 호출 → 시각 응답
+    2.  add_todo       — "보고서", "리포트", "report" → add_todo 3-step 플래너
+    3.  search         — "검색", "데이터 조회" → demo_search (빈 인자) → AskUserEvent (가드)
+    4.  reasoning      — "생각해", "추론" → ReasoningEvent 청크 → DeltaEvent 응답
+    5.  full report    — "전체 보고서" → add_todo 3개 → complete_todo 순차 실행
+    6.  명시 위임      — "코딩 에이전트", "리서치 에이전트" → call_sub_agent (Case 2)
+    7.  체이닝         — "전체 분석" → coding_agent → research_agent 순차 위임
+    8.  서브 에이전트  — system 메시지에 "당신은 '<name>' 서브 에이전트" 포함 시 분기
+                         (오케스트레이터가 _dispatch_sub_agent 로 호출한 격리된 turn)
+    9.  ask_user both  — "데이터 좀 보여줘", "모호한 요청" →
+                         ask_user(options=[...], input_type="both") → 옵션+자유입력 카드
+    10. ask_user choice— "기간 선택", "기간을 골라" →
+                         ask_user(options=[...], input_type="choice") → 옵션만
+    11. ask_user text  — "자유 질문", "ask text" →
+                         ask_user(input_type="text") → 텍스트 입력만
+    12. 기본 echo      — 위 트리거가 없으면 메시지를 그대로 echo
 """
 
 import asyncio
@@ -27,6 +33,8 @@ from agent.models import (
     ToolCallEvent,
     ToolSpec,
 )
+
+from agent.registries.tools import ASK_USER
 
 # 스트리밍 체감을 위한 토큰 간 지연 (초).
 _MOCK_TOKEN_DELAY = 0.02
@@ -49,6 +57,11 @@ _SEARCH_TRIGGERS = ("검색", "search", "데이터 조회")
 
 # ReasoningEvent UI 검증용.
 _REASONING_TRIGGERS = ("생각해", "생각 해", "think", "reason", "추론")
+
+# ask_user sentinel 검증용 — 선택지 제공 방식 (choice / both / text 모드).
+_ASK_CHOICE_TRIGGERS = ("기간 선택", "기간을 골라", "choice 모드", "ask choice")
+_ASK_BOTH_TRIGGERS = ("데이터 좀 보여줘", "모호한 요청", "ask both", "both 모드")
+_ASK_TEXT_TRIGGERS = ("자유 질문", "ask text", "text 모드")
 
 # full report 시나리오 — add_todo + complete_todo 순차 실행.
 _FULL_REPORT_TRIGGERS = ("전체 보고서", "full report")
@@ -218,6 +231,67 @@ class MockProvider:
                     arguments={},
                 )
             )
+            yield DoneEvent()
+            return
+
+        # ── 시나리오 9-11: ask_user sentinel — 3-mode UI 검증 ─────────────────
+        already_asked = _has_recent_tool_result(messages, "mock-ask-")
+        if last_user is not None and not already_asked:
+            if _matches(last_user.content, _ASK_BOTH_TRIGGERS):
+                yield ToolCallEvent(
+                    call=ToolCall(
+                        id=f"mock-ask-both-{uuid.uuid4().hex[:8]}",
+                        name=ASK_USER,
+                        arguments={
+                            "question": "어떤 데이터를 보여드릴까요?",
+                            "options": [
+                                "매출 데이터",
+                                "재고 현황",
+                                "주문 목록",
+                                "고객 통계",
+                            ],
+                            "input_type": "both",
+                        },
+                    )
+                )
+                yield DoneEvent()
+                return
+            if _matches(last_user.content, _ASK_CHOICE_TRIGGERS):
+                yield ToolCallEvent(
+                    call=ToolCall(
+                        id=f"mock-ask-choice-{uuid.uuid4().hex[:8]}",
+                        name=ASK_USER,
+                        arguments={
+                            "question": "조회 기간을 선택해주세요.",
+                            "options": ["오늘", "이번 주", "이번 달", "올해"],
+                            "input_type": "choice",
+                        },
+                    )
+                )
+                yield DoneEvent()
+                return
+            if _matches(last_user.content, _ASK_TEXT_TRIGGERS):
+                yield ToolCallEvent(
+                    call=ToolCall(
+                        id=f"mock-ask-text-{uuid.uuid4().hex[:8]}",
+                        name=ASK_USER,
+                        arguments={
+                            "question": "구체적으로 어떤 내용이 궁금하신가요?",
+                            "options": None,
+                            "input_type": "text",
+                        },
+                    )
+                )
+                yield DoneEvent()
+                return
+
+        # ask_user 답변 후 다음 루프 — 사용자 답변을 활용해 작업 완료 echo.
+        if already_asked and last_user is not None:
+            answer = last_user.content
+            reply = f"'{answer}' 으로 조회를 시작하겠습니다. (mock — 실제 LLM 연결 시 실제 데이터를 가져옵니다.)"
+            for ch in reply:
+                await asyncio.sleep(_MOCK_TOKEN_DELAY)
+                yield DeltaEvent(content=ch)
             yield DoneEvent()
             return
 

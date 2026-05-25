@@ -20,6 +20,9 @@
   let completedCount = $derived(
     todos.filter((t) => t.status === "completed").length
   );
+  let failedCount = $derived(
+    todos.filter((t) => t.status === "failed").length
+  );
 
   /**
    * 상태별 아이콘 텍스트 반환.
@@ -45,7 +48,9 @@
   >
     <span class="chevron" class:open={expanded}>›</span>
     <span class="label">작업 진행</span>
-    <span class="count">{completedCount}/{todos.length} 완료</span>
+    <span class="count">
+      {completedCount}/{todos.length} 완료{failedCount > 0 ? ` · ${failedCount} 실패` : ""}
+    </span>
   </button>
 
   {#if expanded}

@@ -1,14 +1,16 @@
 <script>
   /**
-   * 슬롯 가드가 발동했을 때 표시하는 질문 카드.
+   * 보완 질문 카드 — 슬롯 가드 또는 ask_user sentinel 이 발생시킨 질문을 표시.
    *
-   * options 가 있으면 클릭 가능한 pill 버튼을 렌더링하고, 없으면 질문 텍스트만 보여
-   * 사용자가 아래 입력창에 직접 답변을 입력하도록 안내한다.
+   * input_type 으로 3-mode 렌더링:
+   *   - "choice": 옵션 버튼만 (자유 입력 hint 없음)
+   *   - "text":   질문 텍스트만 (옵션 버튼 미표시) — 사용자는 아래 Composer 에 직접 입력
+   *   - "both":   옵션 버튼 + "또는 직접 입력하세요" hint
    *
    * answered=true 이면 카드 전체를 비활성화(dimmed)하여 이미 답변한 질문임을 나타낸다.
    *
    * 버튼 클릭 → sendMessage(option) 호출 → 기존 채팅 흐름으로 라우팅됨.
-   * 백엔드는 pending_tool + "Pending Slot" system prompt 블록으로 자동 처리한다.
+   * 백엔드는 pending_tool / pending_question system prompt 블록으로 자동 컨텍스트 재주입.
    */
 
   import { ui } from "../lib/state.svelte.js";
@@ -18,6 +20,11 @@
 
   let isStreaming = $derived(ui.streaming);
   let isDisabled = $derived(askUser.answered || isStreaming);
+  // 구버전 메시지 (input_type 없음) 호환 — options 유무로 폴백.
+  let mode = $derived(askUser.input_type ?? (askUser.options ? "both" : "text"));
+  let showOptions = $derived(
+    (mode === "choice" || mode === "both") && askUser.options?.length > 0,
+  );
 
   /**
    * 옵션 버튼 클릭 핸들러.
@@ -36,7 +43,7 @@
 
   <p class="question">{askUser.question}</p>
 
-  {#if askUser.options && askUser.options.length > 0}
+  {#if showOptions}
     <div class="options" role="group" aria-label="선택지">
       {#each askUser.options as option (option)}
         <button
@@ -49,8 +56,15 @@
         </button>
       {/each}
     </div>
-    {#if !askUser.answered}
+  {/if}
+
+  {#if !askUser.answered}
+    {#if mode === "both"}
       <p class="hint">또는 아래 입력창에 직접 입력하세요</p>
+    {:else if mode === "choice"}
+      <p class="hint">위 선택지 중 하나를 골라주세요</p>
+    {:else if mode === "text"}
+      <p class="hint">아래 입력창에 답변을 입력해주세요</p>
     {/if}
   {/if}
 

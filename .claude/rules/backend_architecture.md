@@ -10,7 +10,7 @@
 | dev | 프로젝트 루트 | `build/web/` | — |
 
 > **새 정적 자산을 추가할 때** → `packaging/App.spec`의 `datas`에도 등록 필수.  
-> `PROMPTS/`, `SKILLS/` 는 디렉터리 단위로 이미 등록됐으므로 파일 추가만으로 다음 빌드에 반영된다.
+> `PROMPTS/`, `SKILLS/`, `AGENTS/` 는 디렉터리 단위로 이미 등록됐으므로 파일 추가만으로 다음 빌드에 반영된다.
 
 ---
 
@@ -61,38 +61,79 @@
 
 ---
 
+## 에이전트 설계 원칙
+
+이 프로젝트의 에이전트는 **미리 등록된 Python API 도구를 plan에 따라 실행**하는 역할이다.
+코드를 작성하거나 파일을 편집하는 AI 코딩 어시스턴트가 아님을 항상 염두에 둘 것.
+
+- 에이전트는 일반 질문에 텍스트로 답하거나, `add_todo` 로 plan 수립 후 tool 순차 실행.
+- 오케스트레이터는 복잡한 작업을 `call_sub_agent` 로 서브 에이전트에게 위임.
+- **서브 에이전트는 병렬·백그라운드 실행 없음** — 항상 순차적으로 결과가 반환될 때까지 대기.
+
+---
+
 ## 에이전트 하니스 구조
 
 `backend/agent/harness.py`의 `run_turn()` 한 번 = 사용자 입력 1건에 대한 완전한 응답 턴.
 
 ```
-run_turn(client_id, user_message, *, force_skills=None, ...)
+run_turn(client_id, user_message, *, agent_registry, force_skills=None, ...)
    │
    ├─ state_store.get(client_id)          → AgentState (todo / missing_slots)
    ├─ force_skills ? get_by_names()       → SKILLS body lazy load
    │            : skill_registry.select() → trigger / name 매칭
-   ├─ PromptRegistry.compose()            → PROMPTS/base.md + safety.md
-   ├─ _compose_system_prompt()            → base + skill bodies + todo/pending 요약
-   │    └─ 스킬 2개 이상이면 멀티스킬 플래닝 지침 자동 주입
+   ├─ PromptRegistry.compose()            → PROMPTS/base.md + safety.md (+ orchestrator.md)
+   │
+   ├─ agent_registry 있으면
+   │    └─ _compose_orchestrator_system_prompt() → base + skills + 에이전트 카탈로그 + state
+   │  없으면 (하위호환 단층 모드)
+   │    └─ _compose_system_prompt()              → base + skills + state
    │
    ├─ yield SkillActiveEvent              → 프론트 뱃지 즉시 표시
    │
-   └─ for iteration in range(max_iterations):
-        provider.astream(messages, tools)
-          ├─ delta       → yield 그대로 전달
-          ├─ tool_call   → 분기
-          │    ├─ add_todo / complete_todo  → AgentState 직접 갱신 + TodoUpdateEvent
-          │    ├─ 슬롯 가드 실패             → AskUserEvent + 안전 종료
-          │    └─ 정상 도구                 → _execute_tool + ToolResultEvent
-          └─ done → break
+   └─ _run_agent_turn(depth=0) — 공통 provider→tool 루프
+        ├─ delta           → yield 그대로 전달
+        ├─ tool_call 분기
+        │    ├─ add_todo / complete_todo  → AgentState 직접 갱신 + TodoUpdateEvent
+        │    ├─ call_sub_agent            → _dispatch_sub_agent (순차 실행)
+        │    │    └─ AgentSwitch → AgentProgress×N → AgentReturn
+        │    ├─ 슬롯 가드 실패            → AskUserEvent + 안전 종료
+        │    └─ 정상 도구               → _execute_tool + ToolResultEvent
+        └─ done → break
    │
    └─ store.append + state_store.set + DoneEvent
 ```
 
-### PROMPTS / SKILLS 로딩 정책
+### AgentRegistry — 서브 에이전트 카탈로그 (`AGENTS/`)
+
+`backend/agent/registries/agents.py`의 `AgentRegistry` 가 `AGENTS/*.md` 를 관리.
+
+- 부팅 시 Front Matter(`name` / `description` / `skills` / `tools` / `priority`)만 파싱.
+- 본문(페르소나)은 `call_sub_agent` 위임 시점에 `_ensure_body()` 로 lazy load.
+- `skills` 에 SKILLS 이름 등록 → 해당 트리거 매칭 시 오케스트레이터가 자동 위임 (Case 3 결정론 매핑).
+- `tools` 비어 있으면 에이전트에게 전체 도구 노출. 채워져 있으면 화이트리스트만.
+- `agent_registry` 가 `None` 이거나 빈 경우 → 단층 동작 (하위호환, SKILLS 직접 라우팅).
+- `TurnBudget`: 오케스트레이터 + 모든 서브 에이전트 provider 호출 합산 상한 (`max_agent_calls`). 같은 서브 에이전트 3회 연속 위임은 `loop-guard` 로 차단.
+
+### Tool 등록 패턴 (`agent/tools/`)
+
+새 사내 API 를 도구로 노출하려면 `backend/agent/tools/` 에 새 `.py` 파일을 만들고 `@register_tool` 데코레이터를 붙인 async 함수를 작성하면 끝. 부팅 시 `agent/tools/__init__.py` 가 모든 서브모듈을 import 해 데코레이터의 부수효과로 `_REGISTRY` 가 채워진다.
+
+- **시그니처에서 자동 스키마 생성**: 각 파라미터의 `Annotated[T, "설명"]` 을 Pydantic `create_model` 로 묶어 JSON Schema (LLM 노출) + `TypeAdapter` (입력 검증) 를 1회 생성. 매 turn 재생성 없음.
+- **타입·형식 가드 통합**: `date_from="오늘"` 처럼 형식이 깨진 경우도 `MissingSlot` 으로 변환되어 동일한 `AskUserEvent` 흐름으로 사용자에게 친근한 한국어 재질문.
+- **`ToolResult` 구조화 응답**: 함수는 `str` 또는 `ToolResult(content, data, is_error)` 반환. LLM 컨텍스트엔 `content` 만, 프론트엔드엔 `data` 까지 노출.
+- **Timeout 일등시민**: 데코레이터의 `timeout_seconds` 가 매 호출 `asyncio.wait_for` 로 강제. 기본값은 `APP_TOOL_DEFAULT_TIMEOUT` (30s). 초과 시 `ToolResult(is_error=True, content="[timeout] ...")` 자동 반환.
+- **Sentinel 도구 마커**: `add_todo` / `complete_todo` / `call_sub_agent` / `complete_subagent` 같이 harness 가 tool_call 분기에서 가로채는 도구는 `sentinel=True` 로 등록. `_execute_tool` 에 도달하면 명시적 에러.
+- **`complete_subagent` 종료 규약**: 서브 에이전트는 작업 완료 시 반드시 이 도구를 호출해 `summary` 를 전달한다. harness 가 `ToolResultEvent` 에서 캡처해 `AgentReturnEvent.summary` 로 사용.
+- **서브 에이전트 PLANNER 지원**: `_dispatch_sub_agent` 가 격리된 `AgentState()` (sub_state) 를 생성. 서브 에이전트도 `add_todo` / `complete_todo` 로 자체 작업을 분해할 수 있다.
+- **서브 에이전트 슬롯 영속**: 서브 에이전트가 `AskUserEvent` 를 발생시키면 오케스트레이터 state 에 `pending_sub_agent` / `pending_sub_task` 를 저장. 다음 턴 system prompt 의 "# Pending Sub-Agent Slot" 섹션이 재위임을 유도.
+
+### PROMPTS / SKILLS / AGENTS 로딩 정책
 
 | 디렉터리 | 로딩 시점 | 캐시 정책 |
 |---|---|---|
 | `PROMPTS/` | 매 턴 `_read()` 호출 | dev: mtime 변경 시 재로드 (핫리로드) / frozen: 1회 |
 | `SKILLS/` Front Matter | 부팅 시 `load()` 1회 | 메모리 캐시 고정 |
 | `SKILLS/` body | 매칭된 스킬 첫 호출 시 lazy | dev: mtime 재검사 / frozen: 1회 |
+| `AGENTS/` Front Matter | 부팅 시 `load()` 1회 | 메모리 캐시 고정 |
+| `AGENTS/` body | `call_sub_agent` 위임 시점에 lazy | dev: mtime 재검사 / frozen: 1회 |

@@ -3,6 +3,7 @@
   import { ui } from "../lib/state.svelte.js";
   import ReasoningBlock from "./ReasoningBlock.svelte";
   import TodoProgress from "./TodoProgress.svelte";
+  import SkillCompleteBadge from "./SkillCompleteBadge.svelte";
   import AskUserCard from "./AskUserCard.svelte";
 
   let { message } = $props();
@@ -55,14 +56,20 @@
         </div>
       {/if}
 
-      <!-- 서브 에이전트 진행 영역 — AgentProgress 의 inner delta/tool 표시 -->
+      <!-- 서브 에이전트 진행 영역 — AgentProgress 의 inner delta/tool/todo 표시 -->
       {#if message.agentProgress && message.agentProgress.length > 0}
         {#each message.agentProgress as slot, idx (idx)}
-          {#if slot.deltas || slot.toolStatus}
+          {#if slot.deltas || slot.toolStatus || (slot.todos && slot.todos.length > 0)}
             <div class="agent-progress">
               <div class="agent-progress-label">{slot.agentId}</div>
               {#if slot.toolStatus}
                 <div class="agent-progress-tool">{slot.toolStatus}</div>
+              {/if}
+              {#if slot.todos && slot.todos.length > 0}
+                <TodoProgress todos={slot.todos} />
+              {/if}
+              {#if slot.skillComplete}
+                <SkillCompleteBadge data={slot.skillComplete} />
               {/if}
               {#if slot.deltas}
                 <div class="agent-progress-text">{slot.deltas}</div>
@@ -83,6 +90,11 @@
       <!-- 작업 진행 체크리스트 — TodoUpdateEvent 수신 시 표시 -->
       {#if message.todos && message.todos.length > 0}
         <TodoProgress todos={message.todos} />
+      {/if}
+
+      <!-- 전체 작업 완료 배지 — SkillCompleteEvent 수신 시 표시 -->
+      {#if message.skillComplete}
+        <SkillCompleteBadge data={message.skillComplete} />
       {/if}
 
       {#if !message.content && !message.toolStatus && !message.reasoning && !(message.todos && message.todos.length > 0)}

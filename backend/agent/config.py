@@ -78,6 +78,9 @@ MAX_AGENT_DEPTH: int = int(os.environ.get("APP_MAX_AGENT_DEPTH", "2"))
 # store 가 client 한 명당 보관하는 메시지 수 상한 (system 제외).
 MAX_HISTORY_MESSAGES: int = int(os.environ.get("APP_MAX_HISTORY_MESSAGES", "40"))
 
+# Tool 1회 실행 timeout (초). 데코레이터에서 도구별로 override 가능.
+TOOL_DEFAULT_TIMEOUT: float = float(os.environ.get("APP_TOOL_DEFAULT_TIMEOUT", "30"))
+
 
 # ---------------------------------------------------------------------------
 # Legacy env var fallback for initial settings seed (deprecated, use settings file)
