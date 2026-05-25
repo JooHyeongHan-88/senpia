@@ -5,11 +5,16 @@ const headers = { "Content-Type": "application/json" };
 export async function chat(clientId, message, opts = {}) {
   // opts.forceSkills: 슬래시 커맨드로 사용자가 명시한 skill 이름 배열.
   //   백엔드 ChatRequest.force_skills 와 매핑된다 (snake_case 변환).
+  // opts.sessionTitle: 세션 제목 — 백엔드가 산출물 폴더명에 사용.
   const body = { message };
   if (opts.forceSkills && opts.forceSkills.length > 0) {
     body.force_skills = opts.forceSkills;
   }
-  return fetch(`/api/chat?client_id=${clientId}`, {
+  const params = new URLSearchParams({ client_id: clientId });
+  if (opts.sessionTitle) {
+    params.set("session_title", opts.sessionTitle);
+  }
+  return fetch(`/api/chat?${params.toString()}`, {
     method: "POST",
     headers,
     body: JSON.stringify(body),

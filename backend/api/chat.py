@@ -21,7 +21,11 @@ router = APIRouter(prefix="/api", dependencies=[Depends(require_local_origin)])
 
 
 @router.post("/chat")
-async def chat(req: ChatRequest, client_id: str = Query(...)) -> StreamingResponse:
+async def chat(
+    req: ChatRequest,
+    client_id: str = Query(...),
+    session_title: str = Query(""),
+) -> StreamingResponse:
     """사용자 메시지 1건에 대한 응답을 SSE 로 흘려보낸다.
 
     이벤트 포맷: `data: <StreamEvent JSON>\\n\\n`
@@ -46,6 +50,7 @@ async def chat(req: ChatRequest, client_id: str = Query(...)) -> StreamingRespon
                 max_iterations=MAX_AGENT_ITERATIONS,
                 max_agent_calls=MAX_AGENT_CALLS_PER_TURN,
                 force_skills=req.force_skills,
+                session_title=session_title,
             ):
                 yield f"data: {event.model_dump_json()}\n\n"
         except Exception:

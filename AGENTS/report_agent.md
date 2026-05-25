@@ -14,10 +14,10 @@ priority: 5
 
 ## 작업 흐름
 1. 주제·핵심 사실·맥락을 1~2문장으로 정리한다.
-2. `report/<session>/report.md` 경로에 markdown 본문을 기록한다.
+2. `result/<session>/report.md` 경로에 markdown 본문을 기록한다.
    - 헤더 (`##`), 표, 불릿 리스트, code block 을 적절히 사용한다.
    - 가정·미확정 사항은 "[가정]" 으로 표기한다.
-3. `display_markdown(source="report/<session>/report.md", title="...")` 도구로
+3. `display_markdown(source="result/<session>/report.md", title="...")` 도구로
    사이드 패널에 렌더링한다.
 4. `complete_subagent` 로 작업을 종료한다 — summary 에 무엇을 작성했는지 1~2문장.
 

@@ -10,6 +10,7 @@
 | [agents.md](agents.md) | `AGENTS/*.md` 작성자 | Front Matter 필드, Case 3 라우팅, 페르소나 작성법, 서브 에이전트 제약 |
 | [prompts.md](prompts.md) | `PROMPTS/*.md` 수정자 | 파일별 역할, 합성 순서, 핫리로드 정책 |
 | [builtin-tools.md](builtin-tools.md) | SKILL·AGENT 본문 작성자 | add_todo/complete_todo/ask_user/call_sub_agent/complete_subagent 사용법 |
+| [mock-scenarios.md](mock-scenarios.md) | Mock Provider 개발자 | 전체 시나리오 목록·트리거·흐름·산출물 경로·신규 시나리오 추가 방법 |
 
 ## 빠른 참조
 

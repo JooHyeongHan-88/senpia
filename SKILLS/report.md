@@ -11,8 +11,8 @@ requires_tools: ["display_markdown"]
 ## 절차
 1. `add_todo` 로 아래 3단계를 한 번에 등록한다.
 2. **본문 작성** — 주제·핵심 사실·근거를 markdown 형식으로 정리한다 (헤더·표·불릿·code block).
-3. **산출물 저장** — `report/<session>/report.md` 경로에 본문을 기록한 뒤 `complete_todo`.
-4. **사이드 렌더링** — `display_markdown(source="report/<session>/report.md", title="...")`
+3. **산출물 저장** — `result/<session>/report.md` 경로에 본문을 기록한 뒤 `complete_todo`.
+4. **사이드 렌더링** — `display_markdown(source="result/<session>/report.md", title="...")`
    도구로 우측 패널에 표시한 뒤 `complete_todo`.
 
 ## 행동 원칙

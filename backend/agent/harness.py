@@ -144,6 +144,7 @@ async def run_turn(
     agent_registry: AgentRegistry | None = None,
     max_agent_calls: int = 10,
     force_skills: list[str] | None = None,
+    session_title: str = "",
 ) -> AsyncIterator[StreamEvent]:
     """사용자 메시지 1건에 대한 응답 이벤트 스트림을 생성한다.
 
@@ -169,6 +170,11 @@ async def run_turn(
             / skill_active / reasoning / agent:switch / agent:progress
             / agent:return / done / error.
     """
+    # 세션 컨텍스트를 contextvars 에 저장 — 도구·프로바이더가 산출물 경로 해소 시 참조.
+    from core.result_store import set_session_context
+
+    set_session_context(client_id, session_title)
+
     history = store.get_history(client_id)
     state = state_store.get(client_id)
     user_msg = Message(role="user", content=user_message)

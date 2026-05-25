@@ -446,7 +446,7 @@ export async function sendMessage(text) {
   const llmContent = displayContent || (forceSkills ? forceSkills.join(", ") : "");
 
   try {
-    const response = await chat(session.id, llmContent, { forceSkills });
+    const response = await chat(session.id, llmContent, { forceSkills, sessionTitle: session.title });
     if (!response.ok || !response.body) {
       appendDelta(`[error] HTTP ${response.status}`);
       return;

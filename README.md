@@ -34,9 +34,12 @@ svelte-fastapi-exe/
 │   ├── main.py            # FastAPI 앱, uvicorn 서버, SPA 라우팅
 │   ├── _version.py        # 앱 버전 단일 소스 (release.ps1 이 자동 갱신)
 │   ├── core/              # 앱 인프라 (LLM 무관)
+│   │   ├── config.py      # RESULT_DIR 등 모든 경로·타이머 상수
+│   │   └── result_store.py# 산출물 경로 관리 (artifact_slot, session_dir_name 등)
 │   ├── agent/             # LLM 에이전트 런타임
 │   │   ├── harness.py     # 핵심 턴 루프 (loop detection, error recovery, fallback 포함)
 │   │   ├── tools/         # @register_tool 기반 사내 API 도구 모음
+│   │   │   └── visualize.py # display_image / display_chart / display_markdown
 │   │   ├── registries/    # prompts, skills, tools, agents 카탈로그
 │   │   └── providers/     # factory + mock + openai (LLM 프로바이더 패키지)
 │   ├── api/               # /api/* 엔드포인트 — 도메인별 분할
@@ -51,7 +54,9 @@ svelte-fastapi-exe/
 │   ├── App.spec           # PyInstaller 스펙 — .env에서 APP_NAME 자동 읽음
 │   ├── release.ps1        # 빌드 + sha256 + Nexus 업로드 자동화
 │   └── release-dryrun.ps1 # 로컬 Nexus mock 으로 릴리즈 파이프라인 검증
+├── docs/                  # 에이전트·도구 개발자 참고 문서
 ├── build/                 # 중간 산출물 (gitignored)
+├── result/                # 에이전트 실행 산출물 (gitignored) — {제목}-{id8}/{timestamp}/
 └── release/               # 최종 산출물 (gitignored, Nexus 업로드 대상)
     ├── {AppName}.exe
     ├── {AppName}-X.X.X.exe
@@ -179,6 +184,17 @@ cd backend && uv run python -m pytest tests/ -v
 |---|---|---|
 | `coding_agent` | "코딩", "코드 작성" 등 | 코드 작업 전담 |
 | `report_agent` | "리포트 에이전트", "report_agent" | Markdown 리포트 작성·`display_markdown` 렌더링 전담 |
+
+### 아티팩트 패널 & 산출물 저장
+
+도구가 `display_image` / `display_chart` / `display_markdown` 을 호출하면 채팅창 우측 아티팩트 패널이 열린다.  
+파일 기반 산출물은 `result/` 하위에 저장되며, `/api/chat?session_title=...` query param 으로 전달된 세션 제목이 폴더명에 반영된다.
+
+```
+result/{세션제목}-{id[:8]}/{YYYYMMDD-HHmmss}/파일
+```
+
+`backend/core/result_store.py` 의 `artifact_slot()` 이 슬롯을 생성하고, `contextvars` 로 세션 메타를 도구까지 전달한다 — 도구 시그니처 변경 없음.
 
 ### 에이전트 런타임 안전장치
 

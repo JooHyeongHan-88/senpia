@@ -19,7 +19,6 @@ dist/*
 backend/.runtime/
 
 # SKILL/도구 실행으로 생성된 산출물 (세션별 하위 폴더). 데모 시점에 생성, 추적 금지.
-report/
 result/
 workspace/
 

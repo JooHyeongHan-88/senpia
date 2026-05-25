@@ -105,8 +105,8 @@ if getattr(sys, "frozen", False):
         Path(_appdata_str) if _appdata_str else Path.home() / "AppData" / "Roaming"
     )
     WORKSPACE_DIR: Path = _appdata / APP_NAME / "workspace"
-    # SKILL 실행으로 생성된 리포트 산출물(가상 데이터 포함) — 세션별 하위 폴더.
-    REPORT_DIR: Path = _appdata / APP_NAME / "report"
+    # 에이전트 산출물 — 세션별·시각별 하위 폴더로 구분.
+    RESULT_DIR: Path = _appdata / APP_NAME / "result"
 else:
     WORKSPACE_DIR: Path = _project_root() / "workspace"
-    REPORT_DIR: Path = _project_root() / "report"
+    RESULT_DIR: Path = _project_root() / "result"

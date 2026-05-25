@@ -22,7 +22,7 @@ CATEGORY B — SKILL 라우팅 검증
 ============================================================
     B1. skill_time_lookup     trigger="지금 몇 시", "현재 시각"
         검증: SkillActiveEvent(time_lookup) → now 도구 →
-             report/<session>/favicon.svg 로 복사 → display_image(report/...) → 시각 응답
+             result/{session}/{ts}/favicon.svg 로 복사 → display_image(result/...) → 시각 응답
     B2. skill_report_planner  trigger="보고서", "리포트"
         검증: SkillActiveEvent(report_writer) → add_todo 3단계 플래너
     B3. skill_data_analysis   trigger="데이터 분석", "산점도", "scatter"
@@ -32,9 +32,9 @@ CATEGORY B — SKILL 라우팅 검증
 
 산출물 생성 규약:
     - 데모 데이터는 모두 in-code 상수 (예: _MOCK_SCATTER_DATA) 로만 정의.
-    - report/<session>/* 파일은 트리거 발동 순간 _ensure_*_artifact() 헬퍼가 생성.
-    - 헬퍼는 idempotent — 같은 세션 재실행 시 파일을 다시 쓰지 않음.
-    - report/ 디렉터리는 .gitignore 대상 (사전 스테이징 금지).
+    - result/{session}/{ts}/* 파일은 트리거 발동 순간 _ensure_*_artifact() 헬퍼가 생성.
+    - 헬퍼는 append-only — 호출마다 새 타임스탬프 슬롯에 저장.
+    - result/ 디렉터리는 .gitignore 대상 (사전 스테이징 금지).
 
 ============================================================
 CATEGORY C — TOOL 실행 검증
@@ -57,7 +57,7 @@ CATEGORY D — 서브 에이전트 위임 검증
         검증: 서브 에이전트 내부에서 now 도구 1회 + Task Summary 종료
     D5. sub_explicit_report   trigger="리포트 에이전트", "report_agent"
         검증: Case 2 명시 위임 — call_sub_agent(report_agent) →
-             서브 에이전트가 report/<session>/report.md 생성 → display_markdown
+             서브 에이전트가 result/{session}/{ts}/report.md 생성 → display_markdown
 
 ============================================================
 CATEGORY E — 복합 통합 시나리오 (신규)
@@ -100,7 +100,8 @@ from agent.models import (
     ToolSpec,
 )
 from agent.registries.tools import ASK_USER
-from core.config import REPORT_DIR, WEB_DIR
+from core.config import RESULT_DIR, WEB_DIR
+from core.result_store import artifact_slot, session_dir_name
 
 logger = logging.getLogger(__name__)
 
@@ -919,38 +920,35 @@ _NOW_CALL_PREFIX = "mock-now-"
 _IMG_NOW_PREFIX = "mock-img-now-"
 
 
-def _ensure_favicon_artifact(messages: list[Message]) -> str:
-    """SKILL 실행 결과로 favicon 산출물을 report/<session>/ 에 복사한다.
+def _ensure_favicon_artifact() -> str:
+    """SKILL 실행 결과로 favicon 산출물을 result/{session}/{ts}/ 에 복사한다.
 
-    이미 파일이 존재하면 재사용 (idempotent). WEB_DIR 의 원본이 없으면
-    (dev 환경에서 npm run build 전) 폴백으로 직접 경로를 그대로 반환한다.
+    contextvars 에서 세션 메타를 읽어 artifact_slot() 으로 타임스탬프 슬롯을 생성.
+    WEB_DIR 의 원본이 없으면 폴백으로 직접 경로를 반환한다.
 
     Returns:
         display_image source 인자로 넘길 상대 경로 문자열.
     """
-    session_dir = _session_report_dir(messages)
-    session_dir.mkdir(parents=True, exist_ok=True)
-    artifact = session_dir / "favicon.svg"
+    source_path = WEB_DIR / "assets" / "favicon.svg"
+    if not source_path.exists():
+        logger.debug(
+            "favicon source not found at %s — falling back to direct asset path",
+            source_path,
+        )
+        return "build/web/assets/favicon.svg"
 
-    if not artifact.exists():
-        source_path = WEB_DIR / "assets" / "favicon.svg"
-        if not source_path.exists():
-            logger.debug(
-                "favicon source not found at %s — falling back to direct asset path",
-                source_path,
-            )
-            return "build/web/assets/favicon.svg"
-        shutil.copy2(source_path, artifact)
-
-    return f"report/{session_dir.name}/{artifact.name}"
+    slot = artifact_slot()
+    dest = slot / "favicon.svg"
+    shutil.copy2(source_path, dest)
+    return f"result/{session_dir_name()}/{slot.name}/{dest.name}"
 
 
 async def _time_skill_scenario(
     messages: list[Message],
 ) -> AsyncIterator[StreamEvent]:
-    """B1 확장 — now 도구 → display_image(report/<session>/favicon.svg) → 자연어 응답.
+    """B1 확장 — now 도구 → display_image(result/{session}/{ts}/favicon.svg) → 자연어 응답.
 
-    이미지는 SKILL 산출물 형태로 report/<session>/ 에 복사된 사본을 사용한다 —
+    이미지는 SKILL 산출물 형태로 result/{session}/{ts}/ 에 복사된 사본을 사용한다 —
     B3 (correlation.json) 와 동일한 패턴. 세션 복귀 후 칩 클릭 시에도 동일 경로
     fetch 로 복원된다.
     """
@@ -971,7 +969,7 @@ async def _time_skill_scenario(
 
     # Step 2: 산출물 폴더에 favicon 복사 후 display_image 호출
     if not already_called_img:
-        favicon_path = _ensure_favicon_artifact(messages)
+        favicon_path = _ensure_favicon_artifact()
         yield ToolCallEvent(
             call=ToolCall(
                 id=f"{_IMG_NOW_PREFIX}{uuid.uuid4().hex[:8]}",
@@ -1017,37 +1015,46 @@ _MOCK_SCATTER_DATA: list[list[float]] = [
 ]
 
 
-def _session_report_dir(messages: list[Message]) -> Path:
-    """현재 대화 세션의 리포트 산출물 폴더 경로를 반환한다.
+def _find_existing_artifact(filename: str) -> Path | None:
+    """세션 디렉터리 하위 타임스탬프 슬롯에서 기존 산출물을 찾는다.
 
-    세션 식별자는 system 메시지 내용 길이의 hex 해시를 폴백으로 사용한다 — 결정론적이고
-    mock 컨텍스트로 충분하다. 실제 client_id 는 provider 시그니처상 노출되지 않으므로
-    안전한 대용물을 채택했다.
+    동일 세션에서 여러 iteration 에 걸쳐 같은 산출물을 참조해야 하는
+    mock 시나리오를 위한 헬퍼. 가장 최근 슬롯부터 역순 탐색.
     """
-    seed = messages[0].content if messages else "anon"
-    digest = f"session-{abs(hash(seed)) % (16**8):08x}"
-    return REPORT_DIR / digest
+    from core.result_store import session_dir as _session_dir
+
+    sdir = _session_dir()
+    if not sdir.exists():
+        return None
+    for ts_dir in sorted(sdir.iterdir(), reverse=True):
+        if not ts_dir.is_dir():
+            continue
+        candidate = ts_dir / filename
+        if candidate.is_file():
+            return candidate
+    return None
 
 
-def _ensure_correlation_artifact(messages: list[Message]) -> Path:
-    """`report/<session>/correlation.json` 가상 산출물을 생성(또는 재사용)한다.
+def _ensure_correlation_artifact() -> Path:
+    """`result/{session}/{ts}/correlation.json` 가상 산출물을 생성(또는 재사용)한다.
 
+    이미 동일 세션에 파일이 있으면 재사용한다 (multi-iteration mock 시나리오 대응).
     Provider 가 data_analysis SKILL 을 실행해 만들어 낸 결과라고 가정한다.
-    파일 포맷:
-        {"x_label": "...", "y_label": "...", "points": [[x, y], ...]}
     """
-    session_dir = _session_report_dir(messages)
-    session_dir.mkdir(parents=True, exist_ok=True)
-    artifact = session_dir / "correlation.json"
-    if not artifact.exists():
-        payload = {
-            "x_label": "변수 X",
-            "y_label": "변수 Y",
-            "points": _MOCK_SCATTER_DATA,
-        }
-        artifact.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+    existing = _find_existing_artifact("correlation.json")
+    if existing:
+        return existing
+
+    slot = artifact_slot()
+    artifact = slot / "correlation.json"
+    payload = {
+        "x_label": "변수 X",
+        "y_label": "변수 Y",
+        "points": _MOCK_SCATTER_DATA,
+    }
+    artifact.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     return artifact
 
 
@@ -1061,7 +1068,7 @@ def _data_analysis_scenario(
 ) -> AsyncIterator[StreamEvent]:
     """B3 — data_analysis skill: 3회 provider 호출 + 파일 산출물 기반.
 
-    호출 1: SKILL 실행 결과물 파일을 `report/<session>/correlation.json` 에
+    호출 1: SKILL 실행 결과물 파일을 `result/{session}/{ts}/correlation.json` 에
             기록하고 add_todo(3) 등록.
     호출 2: complete_todo × 3 + display_chart  (파일을 읽어 차트 인자로 변환)
     호출 3: 자연어 최종 보고
@@ -1074,7 +1081,7 @@ def _data_analysis_scenario(
 
     # ── 호출 1: SKILL 실행 → 가상 산출물 파일 생성 + add_todo 등록 ────────
     if not has_add:
-        artifact = _ensure_correlation_artifact(messages)
+        artifact = _ensure_correlation_artifact()
 
         async def _add() -> AsyncIterator[StreamEvent]:
             yield ToolCallEvent(
@@ -1102,7 +1109,7 @@ def _data_analysis_scenario(
 
     # ── 호출 2: complete_todo × 3 + display_chart (산출물 파일에서 빌드) ──
     if not has_chart and task_ids:
-        artifact = _ensure_correlation_artifact(messages)
+        artifact = _ensure_correlation_artifact()
         payload = _load_correlation_artifact(artifact)
 
         async def _complete_all_and_chart() -> AsyncIterator[StreamEvent]:
@@ -1137,12 +1144,12 @@ def _data_analysis_scenario(
         return _complete_all_and_chart()
 
     # ── 호출 3: 자연어 최종 보고 ─────────────────────────────────────────
-    artifact = _ensure_correlation_artifact(messages)
+    artifact = _ensure_correlation_artifact()
 
     async def _report() -> AsyncIterator[StreamEvent]:
         reply = (
             "## 데이터 분석 완료\n\n"
-            f"산출물: `{artifact.relative_to(REPORT_DIR.parent)}`\n\n"
+            f"산출물: `{artifact.relative_to(RESULT_DIR.parent)}`\n\n"
             "**핵심 인사이트**\n"
             "1. 변수 X와 Y 간 양의 선형 상관관계 (r ≈ 0.7)\n"
             "2. 정제 단계에서 이상치 1건 제거\n"
@@ -1193,21 +1200,22 @@ _MOCK_REPORT_MARKDOWN = """# 분기별 매출 분석 리포트
 3. 2026 Q1 신제품 라인업 ROI 추정
 ```
 
-> 본 리포트는 mock provider 데모용 산출물입니다. 동일 세션에서 재실행해도
-> 같은 파일이 재사용됩니다.
+> 본 리포트는 mock provider 데모용 산출물입니다.
 """
 
 
-def _ensure_report_markdown(messages: list[Message]) -> Path:
-    """report_agent 산출물 markdown 파일을 report/<session>/ 에 기록한다.
+def _ensure_report_markdown() -> Path:
+    """report_agent 산출물 markdown 파일을 result/{session}/{ts}/ 에 기록한다.
 
-    idempotent — 같은 세션에서 동일 데모를 재실행해도 파일을 다시 쓰지 않는다.
+    기존 파일이 있으면 재사용 (multi-iteration mock 시나리오 대응).
     """
-    session_dir = _session_report_dir(messages)
-    session_dir.mkdir(parents=True, exist_ok=True)
-    artifact = session_dir / "report.md"
-    if not artifact.exists():
-        artifact.write_text(_MOCK_REPORT_MARKDOWN, encoding="utf-8")
+    existing = _find_existing_artifact("report.md")
+    if existing:
+        return existing
+
+    slot = artifact_slot()
+    artifact = slot / "report.md"
+    artifact.write_text(_MOCK_REPORT_MARKDOWN, encoding="utf-8")
     return artifact
 
 
@@ -1222,9 +1230,9 @@ def _report_agent_scenario(
     has_displayed = _has_recent_tool_result(messages, "mock-sub-report-md-")
 
     if not has_displayed:
-        artifact = _ensure_report_markdown(messages)
-        session_dir = _session_report_dir(messages)
-        rel_source = f"report/{session_dir.name}/{artifact.name}"
+        artifact = _ensure_report_markdown()
+        # result/{session_dir_name}/{ts_slot}/{filename} 형태 상대경로
+        rel_source = f"result/{artifact.parent.parent.name}/{artifact.parent.name}/{artifact.name}"
 
         async def _display() -> AsyncIterator[StreamEvent]:
             yield ToolCallEvent(
