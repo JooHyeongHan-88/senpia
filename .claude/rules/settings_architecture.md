@@ -66,12 +66,25 @@ testConnectionAction()
 
 `/api/chat` 요청마다 `_settings_store.get()`으로 최신 설정을 읽고 `get_provider(settings)`로 인스턴스를 즉시 생성한다. 서버 재시작 없이 프로바이더 전환이 적용된다.
 
+## DTGPT 프로바이더 특이사항
+
+DTGPT는 OpenAI Compatible 구현체(`openai.py`)를 재사용하되, base_url을 settings.json이 아닌 환경 변수에서 고정 주입하는 방식이다.
+
+- **base_url**: `APP_DTGPT_BASE_URL` 환경 변수에서 런타임에 읽음 (`backend/agent/config.py`의 `DTGPT_BASE_URL`)
+- **model**: settings.json에 저장 (UI에서 입력·변경 가능). 최초 시드는 `APP_DTGPT_MODEL`
+- **api_key**: settings.json에 저장 (UI에서 입력)
+- **UI**: `ProviderMeta.requires_base_url=False`이므로 설정 모달에서 Base URL 필드가 숨겨짐
+
+`get_provider(settings)`는 `settings.provider == "dtgpt"` 분기에서 `DTGPT_BASE_URL`을 직접 import해 `OpenAIProvider`에 주입한다.
+
 ## 새 프로바이더 추가 방법
 
-1. `backend/agent/providers/<name>.py` 생성 — `astream(messages, tools)` AsyncGenerator 구현
+1. `backend/agent/providers/<name>.py` 생성 — `astream(messages, tools)` AsyncGenerator 구현  
+   (기존 구현체 재사용 가능하면 생략 — DTGPT는 `openai.py` 재사용)
 2. `backend/agent/providers/factory.py`의 `get_provider()`에 분기 추가
-3. `backend/settings/models.py`의 `Literal["mock", "openai_compatible", "<name>"]`에 추가
+3. `backend/settings/models.py`의 `Literal["mock", "openai_compatible", "dtgpt", "<name>"]`에 추가  
+   (`LLMSettings`, `ProviderMeta`, `ConnectionTestRequest` 세 곳 모두)
 4. `backend/api/settings.py`의 `list_providers()`에 `ProviderMeta` 항목 추가
-5. `backend/settings/store.py`는 변경 불필요 (Pydantic이 알 수 없는 Literal값은 ValidationError)
+5. `backend/settings/store.py`는 변경 불필요 (Pydantic이 알 수 없는 Literal 값은 ValidationError)
 
 기존 `settings.json`에 새 provider 값이 없으면 로드 실패할 수 있으므로, Literal 변경 전에 마이그레이션 또는 기본값 처리 고려.

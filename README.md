@@ -160,8 +160,10 @@ App.exe 실행
 
 ### LLM 설정
 
-- UI 기어 아이콘 → 설정 모달에서 프로바이더·모델·API키·Base URL 변경
+- UI 기어 아이콘 → 설정 모달에서 프로바이더 선택 후 모델·API 키 입력 (프로바이더 순서: DTGPT → OpenAI Compatible → Mock)
 - `%APPDATA%\{APP_NAME}\settings.json` (frozen) 또는 `backend/settings/settings.json` (dev)에 영속화
+- **DTGPT**: Base URL은 `.env`의 `APP_DTGPT_BASE_URL`에서 고정 로드 — UI에 노출하지 않음. 기본 모델명은 `APP_DTGPT_MODEL`로 초기 시드
+- **OpenAI Compatible**: Base URL·모델·API 키 모두 UI에서 입력
 - temperature, max_tokens, system_prompt는 `.env` / 환경 변수로 제어 (설정 모달 미노출)
 - 설정 변경 즉시 반영 (서버 재시작 불필요 — 매 `/api/chat` 요청마다 최신 설정 로드)
 

@@ -55,17 +55,13 @@ def _init_settings_store() -> SettingsStore:
     store = SettingsStore(file_path=SETTINGS_FILE_PATH)
     # If settings file doesn't exist, try to seed from env vars
     if not SETTINGS_FILE_PATH.exists():
-        from agent.config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL, LLM_PROVIDER
+        from agent.config import DTGPT_MODEL, LLM_PROVIDER
 
         patch = {}
         if LLM_PROVIDER and LLM_PROVIDER != "mock":
             patch["provider"] = LLM_PROVIDER
-        if LLM_MODEL:
-            patch["model"] = LLM_MODEL
-        if LLM_API_KEY:
-            patch["api_key"] = LLM_API_KEY
-        if LLM_BASE_URL:
-            patch["base_url"] = LLM_BASE_URL
+        if DTGPT_MODEL and LLM_PROVIDER == "dtgpt":
+            patch["model"] = DTGPT_MODEL
         if patch:
             store.update(patch)
     return store

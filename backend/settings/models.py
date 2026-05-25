@@ -12,7 +12,7 @@ class LLMSettings(BaseModel):
     and system_prompt are managed via config.py / environment variables, not here.
     """
 
-    provider: Literal["mock", "openai_compatible"] = "mock"
+    provider: Literal["mock", "openai_compatible", "dtgpt"] = "mock"
     model: str = ""
     api_key: str = ""
     base_url: str = ""  # For openai_compatible (e.g., http://localhost:8000/v1)
@@ -21,7 +21,7 @@ class LLMSettings(BaseModel):
 class ProviderMeta(BaseModel):
     """Metadata about an available LLM provider for UI rendering."""
 
-    id: Literal["mock", "openai_compatible"]
+    id: Literal["mock", "openai_compatible", "dtgpt"]
     label: str
     requires_api_key: bool
     requires_base_url: bool
@@ -33,7 +33,7 @@ class ProviderMeta(BaseModel):
 class ConnectionTestRequest(BaseModel):
     """Request to test LLM provider connectivity."""
 
-    provider: Literal["mock", "openai_compatible"]
+    provider: Literal["mock", "openai_compatible", "dtgpt"]
     model: str = ""
     api_key: str = ""
     base_url: str = ""

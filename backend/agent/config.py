@@ -95,6 +95,5 @@ TOOL_DEFAULT_TIMEOUT: float = float(os.environ.get("APP_TOOL_DEFAULT_TIMEOUT", "
 # ---------------------------------------------------------------------------
 
 LLM_PROVIDER: str = os.environ.get("APP_LLM_PROVIDER", "mock")
-LLM_BASE_URL: str | None = os.environ.get("APP_LLM_BASE_URL")
-LLM_MODEL: str | None = os.environ.get("APP_LLM_MODEL")
-LLM_API_KEY: str | None = os.environ.get("APP_LLM_API_KEY")
+DTGPT_BASE_URL: str | None = os.environ.get("APP_DTGPT_BASE_URL") or None
+DTGPT_MODEL: str | None = os.environ.get("APP_DTGPT_MODEL") or None

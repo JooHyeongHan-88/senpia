@@ -117,9 +117,9 @@ backend/
       tools.py        ToolRegistry
       agents.py       AgentRegistry (AGENTS/*.md 서브 에이전트 카탈로그)
     providers/        LLM 어댑터
-      factory.py      get_provider() 디스패처
+      factory.py      get_provider() 디스패처 (mock / dtgpt / openai_compatible)
       mock.py         Mock (테스트용)
-      openai.py       OpenAI Compatible
+      openai.py       OpenAI Compatible — DTGPT도 이 구현체를 재사용
     tools/            @register_tool 데코레이터 기반 사내 API 도구 모음
       __init__.py     하위 모듈 import → 데코레이터 자기등록 트리거
       builtin.py      now (기본 내장)
@@ -189,10 +189,9 @@ updater/      ─(PyI)───► build/updater/Updater.exe
 | `APP_UPDATE_CHECK_TIMEOUT` | `5` | latest.json GET 타임아웃 (초) |
 | `APP_UPDATE_DOWNLOAD_TIMEOUT` | `60` | EXE 다운로드 타임아웃 (초) |
 | `APP_UPDATE_CHECK_CACHE_TTL` | `300` | /api/update/check 캐시 TTL (초) |
-| `APP_LLM_PROVIDER` | `mock` | 초기 settings.json 시드용 |
-| `APP_LLM_BASE_URL` | — | 초기 시드용 |
-| `APP_LLM_MODEL` | — | 초기 시드용 |
-| `APP_LLM_API_KEY` | — | 초기 시드용 |
+| `APP_LLM_PROVIDER` | `mock` | 초기 settings.json 시드용 (`mock` \| `dtgpt` \| `openai_compatible`) |
+| `APP_DTGPT_BASE_URL` | — | DTGPT 엔드포인트 — UI 비노출, 런타임에 factory가 직접 읽음 |
+| `APP_DTGPT_MODEL` | — | DTGPT 기본 모델명 — settings.json 최초 시드 시만 적용, 이후 UI 우선 |
 | `APP_SYSTEM_PROMPT` | (내장 한국어 프롬프트) | LLM 시스템 프롬프트 |
 | `APP_LLM_TEMPERATURE` | `0.7` | 생성 temperature |
 | `APP_LLM_MAX_TOKENS` | — | 미설정 시 provider 기본값 |

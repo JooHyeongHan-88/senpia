@@ -37,6 +37,24 @@ def get_provider(settings: LLMSettings) -> LLMProvider:
 
         return MockProvider()
 
+    if settings.provider == "dtgpt":
+        from agent.config import DTGPT_BASE_URL
+
+        if not DTGPT_BASE_URL:
+            raise ValueError("DTGPT requires APP_DTGPT_BASE_URL to be configured")
+        if not settings.api_key or not settings.model:
+            raise ValueError("DTGPT requires api_key and model")
+
+        from agent.providers.openai import OpenAIProvider
+
+        return OpenAIProvider(
+            api_key=settings.api_key,
+            model=settings.model,
+            base_url=DTGPT_BASE_URL,
+            temperature=LLM_TEMPERATURE,
+            max_tokens=LLM_MAX_TOKENS,
+        )
+
     if settings.provider == "openai_compatible":
         if not settings.api_key or not settings.model or not settings.base_url:
             raise ValueError("OpenAI-compatible requires api_key, model, and base_url")

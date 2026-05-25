@@ -39,11 +39,11 @@ async def list_providers() -> list[ProviderMeta]:
     """Get metadata for available LLM providers."""
     return [
         ProviderMeta(
-            id="mock",
-            label="Mock (Test Mode)",
-            requires_api_key=False,
+            id="dtgpt",
+            label="DTGPT",
+            requires_api_key=True,
             requires_base_url=False,
-            requires_model=False,
+            requires_model=True,
             suggested_models=[],
             docs_url=None,
         ),
@@ -60,6 +60,15 @@ async def list_providers() -> list[ProviderMeta]:
                 "llama-3-70b",
             ],
             docs_url="https://platform.openai.com/docs/api-reference",
+        ),
+        ProviderMeta(
+            id="mock",
+            label="Mock (Test Mode)",
+            requires_api_key=False,
+            requires_base_url=False,
+            requires_model=False,
+            suggested_models=[],
+            docs_url=None,
         ),
     ]
 
