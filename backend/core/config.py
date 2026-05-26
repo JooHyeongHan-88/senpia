@@ -24,8 +24,7 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parent.parent.parent
 
 
-if not getattr(sys, "frozen", False):
-    load_dotenv(dotenv_path=_project_root() / ".env", override=False)
+load_dotenv(dotenv_path=_project_root() / ".env", override=False)
 
 
 # ---------------------------------------------------------------------------

@@ -1,3 +1,4 @@
+import mimetypes
 import threading
 
 import uvicorn
@@ -15,6 +16,10 @@ from core import browser
 from core.browser import open_browser, watchdog
 from core.config import ASSETS_DIR, HOST, PORT, RESULT_DIR, WEB_DIR, WORKSPACE_DIR
 
+# Windows Python 환경에 따라 mimetypes 레지스트리가 누락된 확장자를 보정한다.
+mimetypes.add_type("application/javascript", ".js")
+mimetypes.add_type("text/css", ".css")
+mimetypes.add_type("image/svg+xml", ".svg")
 
 app = FastAPI()
 
@@ -71,9 +76,12 @@ if WEB_DIR.exists():
             raise HTTPException(status_code=404)
 
         if candidate.is_file():
-            return FileResponse(candidate)
+            media_type = (
+                mimetypes.guess_type(str(candidate))[0] or "application/octet-stream"
+            )
+            return FileResponse(candidate, media_type=media_type)
 
-        return FileResponse(WEB_DIR / "index.html")
+        return FileResponse(WEB_DIR / "index.html", media_type="text/html")
 
 
 if __name__ == "__main__":

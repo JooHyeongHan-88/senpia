@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, Depends
 
+from agent.models import Message
 from agent.providers.factory import get_provider
 from api.deps import _settings_store, require_local_origin
 from settings.masking import mask_api_key
@@ -103,13 +104,9 @@ async def test_connection(req: ConnectionTestRequest) -> ConnectionTestResult:
 
         # Test with a simple message (no tools)
         import asyncio
+        import time
 
-        message = [
-            {
-                "role": "user",
-                "content": "ping",
-            }
-        ]
+        message = [Message(role="user", content="ping")]
 
         # For mock provider, just return ok immediately
         if req.provider == "mock":
@@ -120,16 +117,14 @@ async def test_connection(req: ConnectionTestRequest) -> ConnectionTestResult:
             )
 
         # For real providers, measure latency
-        import time
-
         start = time.perf_counter()
 
-        # Use asyncio.wait_for with timeout
+        async def _consume_stream() -> None:
+            async for _ in provider.astream(message, []):
+                pass
+
         try:
-            async for event in asyncio.wait_for(
-                provider.astream(message, []), timeout=10.0
-            ):
-                pass  # Just consume events
+            await asyncio.wait_for(_consume_stream(), timeout=10.0)
         except asyncio.TimeoutError:
             return ConnectionTestResult(
                 ok=False,

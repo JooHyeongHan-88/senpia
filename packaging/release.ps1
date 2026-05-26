@@ -17,43 +17,20 @@
 #
 # Usage:
 #   pwsh packaging/release.ps1
-#   pwsh packaging/release.ps1 -Upload -NexusBaseUrl https://nexus.internal/repository/myapp -NexusUser foo -NexusPass bar
+#   pwsh packaging/release.ps1 -Upload -Notes "변경사항 요약"
+#
+# Nexus URL/자격증명은 .env(APP_NEXUS_BASE_URL, APP_NEXUS_USER, APP_NEXUS_PASSWORD)에서 읽는다.
+# 업로드 실행은 packaging/update.py 에 위임된다.
 
 param(
     [switch]$Upload,
     [switch]$Force,
-    [string]$NexusBaseUrl = "",
-    [string]$NexusUser,
-    [string]$NexusPass,
     [string]$Notes = ""
 )
 
 $ErrorActionPreference = "Stop"
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $root
-
-# Helper for network retries
-function Invoke-WithRetry {
-    param (
-        [scriptblock]$Action,
-        [int]$MaxRetries = 3,
-        [int]$DelaySeconds = 5
-    )
-    $attempt = 1
-    while ($true) {
-        try {
-            & $Action
-            return
-        } catch {
-            if ($attempt -ge $MaxRetries) {
-                throw "Failed after $MaxRetries attempts: $_"
-            }
-            Write-Host "    -> Error: $_. Retrying in $DelaySeconds seconds (Attempt $attempt of $MaxRetries)..." -ForegroundColor Yellow
-            Start-Sleep -Seconds $DelaySeconds
-            $attempt++
-        }
-    }
-}
 
 # 0. Pre-flight checks
 if (-not $Force) {
@@ -90,15 +67,6 @@ if (-not $AppName) {
 }
 Write-Host "==> app name  : $AppName"
 
-# Fall back to a sensible Nexus default if not provided.
-if (-not $NexusBaseUrl) {
-    if ($env:APP_NEXUS_BASE_URL) {
-        $NexusBaseUrl = $env:APP_NEXUS_BASE_URL
-    } else {
-        $NexusBaseUrl = "https://nexus.internal/repository/$($AppName.ToLower())"
-    }
-}
-
 # 1. version sync: pyproject.toml -> backend/_version.py
 $pyproject = Get-Content "pyproject.toml" -Raw
 if ($pyproject -notmatch '(?m)^version\s*=\s*"([^"]+)"') {
@@ -113,43 +81,6 @@ Write-Host "==> version   : $version"
     (New-Object System.Text.UTF8Encoding $false)
 )
 
-# Resolve credentials and pre-flight check Nexus version existence
-if ($Upload) {
-    if (-not $NexusUser) { $NexusUser = $env:NEXUS_USER }
-    if (-not $NexusUser) { $NexusUser = $env:APP_NEXUS_USER } # support .env prefix
-    
-    if (-not $NexusPass) { $NexusPass = $env:NEXUS_PASSWORD }
-    if (-not $NexusPass) { $NexusPass = $env:APP_NEXUS_PASSWORD } # support .env prefix
-    
-    if (-not $NexusUser -or -not $NexusPass) {
-        Write-Host "Nexus credentials not provided via parameters or environment variables (NEXUS_USER/NEXUS_PASSWORD)."
-        $NexusUser = Read-Host "Enter Nexus Username"
-        $securePass = Read-Host "Enter Nexus Password" -AsSecureString
-        $NexusPass = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePass))
-    }
-    
-    $global:headers = @{}
-    if ($NexusUser -and $NexusPass) {
-        $pair = "$NexusUser`:$NexusPass"
-        $b64  = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($pair))
-        $global:headers["Authorization"] = "Basic $b64"
-    }
-
-    $versionedName = "$AppName-$version.exe"
-    Write-Host "==> checking if $versionedName already exists on Nexus..."
-    try {
-        $null = Invoke-RestMethod -Uri "$NexusBaseUrl/$versionedName" -Method Head -Headers $global:headers -ErrorAction Stop
-        # If no error, the file already exists (200 OK)
-        if (-not $Force) {
-            Write-Host "ERROR: Version $version ($versionedName) already exists on Nexus. Increment version or use -Force." -ForegroundColor Red
-            exit 1
-        } else {
-            Write-Host "WARNING: Version $version already exists, but -Force is specified. Proceeding to overwrite." -ForegroundColor Yellow
-        }
-    } catch {
-        Write-Host "    -> Not found on server (or check failed). Clear to proceed." -ForegroundColor Green
-    }
-}
 
 # 2. frontend build -> build/web/
 Write-Host "==> frontend build  (-> build/web/)"
@@ -192,9 +123,13 @@ $versionedName = "$AppName-$version.exe"
 $versionedPath = "release/$versionedName"
 Copy-Item $exePath $versionedPath -Force
 
+$_nexusBase = $env:APP_NEXUS_BASE_URL
+if (-not $_nexusBase) { $_nexusBase = "https://nexus.internal/repository/$($AppName.ToLower())" }
+$_nexusBase = $_nexusBase.TrimEnd('/')
+
 $latest = [ordered]@{
     version               = $version
-    url                   = "$NexusBaseUrl/$versionedName"
+    url                   = "$_nexusBase/$versionedName"
     sha256                = $sha256
     size                  = $size
     released_at           = $releasedAt
@@ -218,30 +153,11 @@ Write-Host "    $versionedPath  ($size bytes)"
 Write-Host "    sha256 : $sha256"
 Write-Host "    $latestJsonPath"
 
-# 6. upload
+# 6. upload — Python 스크립트에 위임 (프록시·SSL 설정은 update.py 에서 처리)
 if ($Upload) {
-    if (-not $NexusUser -or -not $NexusPass) {
-        Write-Host "WARNING: Nexus credentials still missing; proceeding with anonymous PUT." -ForegroundColor Yellow
-    }
-
-    # Upload EXE first -- latest.json must go last so clients never see a metadata
-    # pointer to a non-existent file.
-    Write-Host "==> uploading $versionedName"
-    Invoke-WithRetry -Action {
-        Invoke-WebRequest -Uri "$NexusBaseUrl/$versionedName" `
-            -Method Put -InFile $versionedPath -Headers $global:headers `
-            -ContentType "application/octet-stream" | Out-Null
-    }
-
-    Write-Host "==> uploading latest.json"
-    Invoke-WithRetry -Action {
-        Invoke-WebRequest -Uri "$NexusBaseUrl/latest.json" `
-            -Method Put -InFile $latestJsonPath -Headers $global:headers `
-            -ContentType "application/json" | Out-Null
-    }
-
-    Write-Host "uploaded: $NexusBaseUrl/$versionedName"
-    Write-Host "uploaded: $NexusBaseUrl/latest.json"
+    Write-Host "==> uploading via packaging/update.py"
+    uv run packaging/update.py
+    if ($LASTEXITCODE -ne 0) { throw "upload failed (packaging/update.py exited $LASTEXITCODE)" }
 } else {
     Write-Host ""
     Write-Host "Skipping upload. Add -Upload flag to push to Nexus."

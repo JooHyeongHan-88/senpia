@@ -25,6 +25,7 @@ a = Analysis(
     binaries=[],
     datas=[
         # source -> destination inside sys._MEIPASS
+        (os.path.join(root, '.env'), '.'),
         (os.path.join(root, 'build', 'web'), 'web'),
         (os.path.join(root, 'build', 'updater', 'Updater.exe'), 'updater'),
         # Agent guideline directories — backend/agent/registries/{prompts,skills}.py 가 MEIPASS 에서 읽음.

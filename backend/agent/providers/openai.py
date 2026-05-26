@@ -64,77 +64,77 @@ class OpenAIProvider:
         wire_tools = [_convert_tool_spec_to_wire(t) for t in tools]
 
         try:
-            async with self._client.chat.completions.create(
+            stream = await self._client.chat.completions.create(
                 model=self._model,
                 messages=wire_messages,
                 tools=wire_tools if wire_tools else None,
                 temperature=self._temperature,
                 max_tokens=self._max_tokens,
                 stream=True,
-            ) as stream:
-                tool_calls_buffer: dict[int, dict] = {}
-                current_delta = ""
+            )
+            tool_calls_buffer: dict[int, dict] = {}
+            current_delta = ""
 
-                async for event in stream:
-                    if event.choices and len(event.choices) > 0:
-                        choice = event.choices[0]
-                        delta = choice.delta
+            async for event in stream:
+                if event.choices and len(event.choices) > 0:
+                    choice = event.choices[0]
+                    delta = choice.delta
 
-                        # Reasoning content (OpenAI o-series 모델의 thinking 토큰)
-                        # getattr 로 접근해 reasoning_content 가 없는 모델에서도 안전하게 동작.
-                        reasoning_chunk = getattr(delta, "reasoning_content", None)
-                        if reasoning_chunk:
-                            yield ReasoningEvent(content=reasoning_chunk)
+                    # Reasoning content (OpenAI o-series 모델의 thinking 토큰)
+                    # getattr 로 접근해 reasoning_content 가 없는 모델에서도 안전하게 동작.
+                    reasoning_chunk = getattr(delta, "reasoning_content", None)
+                    if reasoning_chunk:
+                        yield ReasoningEvent(content=reasoning_chunk)
 
-                        # Content delta (text)
-                        if delta.content:
-                            current_delta = delta.content
-                            yield DeltaEvent(content=current_delta)
+                    # Content delta (text)
+                    if delta.content:
+                        current_delta = delta.content
+                        yield DeltaEvent(content=current_delta)
 
-                        # Tool call started or continued
-                        if delta.tool_calls:
-                            for tool_call in delta.tool_calls:
-                                idx = tool_call.index
-                                if idx not in tool_calls_buffer:
-                                    tool_calls_buffer[idx] = {
-                                        "id": None,
-                                        "function": {"name": None, "arguments": ""},
-                                    }
+                    # Tool call started or continued
+                    if delta.tool_calls:
+                        for tool_call in delta.tool_calls:
+                            idx = tool_call.index
+                            if idx not in tool_calls_buffer:
+                                tool_calls_buffer[idx] = {
+                                    "id": None,
+                                    "function": {"name": None, "arguments": ""},
+                                }
 
-                                if tool_call.id:
-                                    tool_calls_buffer[idx]["id"] = tool_call.id
-                                if tool_call.function and tool_call.function.name:
-                                    tool_calls_buffer[idx]["function"]["name"] = (
-                                        tool_call.function.name
-                                    )
-                                if tool_call.function and tool_call.function.arguments:
-                                    tool_calls_buffer[idx]["function"]["arguments"] += (
-                                        tool_call.function.arguments
-                                    )
-
-                        # Finish (tool_calls or stop)
-                        if choice.finish_reason in ("tool_calls", "function_call"):
-                            for tc in tool_calls_buffer.values():
-                                import json
-
-                                args = tc["function"]["arguments"]
-                                try:
-                                    parsed_args = json.loads(args) if args else {}
-                                except json.JSONDecodeError:
-                                    parsed_args = {}
-
-                                yield ToolCallEvent(
-                                    call=ToolCall(
-                                        id=tc["id"] or "unknown",
-                                        name=tc["function"]["name"] or "unknown",
-                                        arguments=parsed_args,
-                                    )
+                            if tool_call.id:
+                                tool_calls_buffer[idx]["id"] = tool_call.id
+                            if tool_call.function and tool_call.function.name:
+                                tool_calls_buffer[idx]["function"]["name"] = (
+                                    tool_call.function.name
                                 )
-                            yield DoneEvent()
-                            return
-                        elif choice.finish_reason == "stop":
-                            yield DoneEvent()
-                            return
+                            if tool_call.function and tool_call.function.arguments:
+                                tool_calls_buffer[idx]["function"]["arguments"] += (
+                                    tool_call.function.arguments
+                                )
+
+                    # Finish (tool_calls or stop)
+                    if choice.finish_reason in ("tool_calls", "function_call"):
+                        for tc in tool_calls_buffer.values():
+                            import json
+
+                            args = tc["function"]["arguments"]
+                            try:
+                                parsed_args = json.loads(args) if args else {}
+                            except json.JSONDecodeError:
+                                parsed_args = {}
+
+                            yield ToolCallEvent(
+                                call=ToolCall(
+                                    id=tc["id"] or "unknown",
+                                    name=tc["function"]["name"] or "unknown",
+                                    arguments=parsed_args,
+                                )
+                            )
+                        yield DoneEvent()
+                        return
+                    elif choice.finish_reason == "stop":
+                        yield DoneEvent()
+                        return
 
         except Exception:
             logger.exception("OpenAI provider error")
