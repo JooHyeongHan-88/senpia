@@ -3,8 +3,38 @@
   import { createSession, toggleTheme, toggleSidebar } from "../lib/chatActions.svelte.js";
   import { openSettings } from "../lib/settingsActions.svelte.js";
   import { relativeTimeBucket, BUCKET_ORDER } from "../lib/format.js";
+  import { saveSidebarWidth, SIDEBAR_WIDTH_BOUNDS } from "../lib/storage.js";
   import SessionItem from "./SessionItem.svelte";
   import ModelPicker from "./ModelPicker.svelte";
+
+  let resizing = $state(false);
+
+  function clampWidth(px) {
+    const upper = Math.min(
+      SIDEBAR_WIDTH_BOUNDS.max,
+      Math.floor(window.innerWidth * 0.4),
+    );
+    return Math.min(upper, Math.max(SIDEBAR_WIDTH_BOUNDS.min, Math.round(px)));
+  }
+
+  function onHandlePointerDown(e) {
+    if (e.button !== 0) return;
+    resizing = true;
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    e.preventDefault();
+  }
+
+  function onHandlePointerMove(e) {
+    if (!resizing) return;
+    ui.sidebarWidth = clampWidth(e.clientX);
+  }
+
+  function onHandlePointerUp(e) {
+    if (!resizing) return;
+    resizing = false;
+    e.currentTarget.releasePointerCapture?.(e.pointerId);
+    saveSidebarWidth(ui.sidebarWidth);
+  }
 
   let grouped = $derived.by(() => {
     const buckets = {};
@@ -22,7 +52,23 @@
   let isDark = $derived(ui.theme === "dark");
 </script>
 
-<aside class="sidebar" class:open={ui.sidebarOpen}>
+<aside
+  class="sidebar"
+  class:open={ui.sidebarOpen}
+  class:resizing
+  style="width: {ui.sidebarWidth}px"
+>
+  <!-- 우측 가장자리 드래그 핸들 -->
+  <div
+    class="resize-handle"
+    role="separator"
+    aria-orientation="vertical"
+    aria-label="사이드바 너비 조절"
+    onpointerdown={onHandlePointerDown}
+    onpointermove={onHandlePointerMove}
+    onpointerup={onHandlePointerUp}
+    onpointercancel={onHandlePointerUp}
+  ></div>
   <div class="header">
     <div class="brand">
       <span class="logo" aria-hidden="true">
@@ -103,13 +149,37 @@
 
 <style>
   .sidebar {
-    width: 264px;
+    /* width 는 ui.sidebarWidth 로 동적 지정 */
     background: var(--bg-elevated);
     border-right: 1px solid var(--border);
     display: flex;
     flex-direction: column;
     height: 100%;
     flex-shrink: 0;
+    position: relative;
+  }
+
+  .sidebar.resizing {
+    user-select: none;
+    cursor: ew-resize;
+  }
+
+  .resize-handle {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 6px;
+    height: 100%;
+    cursor: ew-resize;
+    z-index: 10;
+    background: transparent;
+    transition: background 0.12s;
+    touch-action: none;
+  }
+
+  .resize-handle:hover,
+  .sidebar.resizing .resize-handle {
+    background: color-mix(in srgb, var(--accent) 35%, transparent);
   }
 
   .header {
@@ -252,9 +322,14 @@
       left: 0;
       z-index: 11;
       height: 100%;
+      width: 264px !important; /* 모바일은 고정 너비 */
       transform: translateX(-100%);
       transition: transform 0.18s ease;
       box-shadow: var(--shadow-md);
+    }
+
+    .resize-handle {
+      display: none;
     }
 
     .sidebar.open {

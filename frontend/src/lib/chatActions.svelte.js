@@ -9,6 +9,7 @@ import {
   loadTheme,
   saveTheme,
   loadArtifactWidth,
+  loadSidebarWidth,
 } from "./storage.js";
 import {
   chat,
@@ -530,6 +531,7 @@ export async function initApp() {
   ui.theme = loadTheme();
   document.documentElement.setAttribute("data-theme", ui.theme);
   ui.artifactWidth = loadArtifactWidth();
+  ui.sidebarWidth = loadSidebarWidth();
 
   const sessions = loadSessions();
   ui.sessions = sessions.sort((a, b) => b.updatedAt - a.updatedAt);

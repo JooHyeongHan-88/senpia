@@ -49,6 +49,9 @@ export const ui = $state({
 
   // 사용자가 마우스 드래그로 조절한 우측 아티팩트 패널 너비 (px). initApp 에서 로드.
   artifactWidth: 420,
+
+  // 사용자가 마우스 드래그로 조절한 좌측 사이드바 너비 (px). initApp 에서 로드.
+  sidebarWidth: 264,
 });
 
 export function activeSession() {

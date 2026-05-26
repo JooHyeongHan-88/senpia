@@ -4,10 +4,15 @@ const KEY_SESSIONS = "chat:sessions:v1";
 const KEY_ACTIVE = "chat:activeSessionId:v1";
 const KEY_THEME = "chat:theme:v1";
 const KEY_ARTIFACT_WIDTH = "chat:artifactWidth:v1";
+const KEY_SIDEBAR_WIDTH = "chat:sidebarWidth:v1";
 
 const ARTIFACT_WIDTH_MIN = 320;
 const ARTIFACT_WIDTH_MAX = 800;
 const ARTIFACT_WIDTH_DEFAULT = 420;
+
+const SIDEBAR_WIDTH_MIN = 180;
+const SIDEBAR_WIDTH_MAX = 480;
+const SIDEBAR_WIDTH_DEFAULT = 264;
 
 export function loadSessions() {
   try {
@@ -84,4 +89,32 @@ export const ARTIFACT_WIDTH_BOUNDS = {
   min: ARTIFACT_WIDTH_MIN,
   max: ARTIFACT_WIDTH_MAX,
   default: ARTIFACT_WIDTH_DEFAULT,
+};
+
+export function loadSidebarWidth() {
+  try {
+    const raw = localStorage.getItem(KEY_SIDEBAR_WIDTH);
+    if (!raw) return SIDEBAR_WIDTH_DEFAULT;
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return SIDEBAR_WIDTH_DEFAULT;
+    return Math.min(SIDEBAR_WIDTH_MAX, Math.max(SIDEBAR_WIDTH_MIN, n));
+  } catch {
+    return SIDEBAR_WIDTH_DEFAULT;
+  }
+}
+
+export function saveSidebarWidth(px) {
+  try {
+    const clamped = Math.min(
+      SIDEBAR_WIDTH_MAX,
+      Math.max(SIDEBAR_WIDTH_MIN, Math.round(px)),
+    );
+    localStorage.setItem(KEY_SIDEBAR_WIDTH, String(clamped));
+  } catch {}
+}
+
+export const SIDEBAR_WIDTH_BOUNDS = {
+  min: SIDEBAR_WIDTH_MIN,
+  max: SIDEBAR_WIDTH_MAX,
+  default: SIDEBAR_WIDTH_DEFAULT,
 };
