@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 
 from agent import harness
-from agent.config import MAX_AGENT_CALLS_PER_TURN, MAX_AGENT_ITERATIONS, SYSTEM_PROMPT
+from agent.config import MAX_AGENT_CALLS_PER_TURN, MAX_AGENT_ITERATIONS
 from agent.models import ChatRequest, ConversationResponse, RestoreRequest
 from agent.providers.factory import get_provider
 from agent.registries.agents import registry as agent_registry
@@ -31,11 +31,11 @@ async def chat(
     이벤트 포맷: `data: <StreamEvent JSON>\\n\\n`
     이벤트 종류는 chat.models.StreamEvent 의 discriminator 참고.
     """
-    settings = _settings_store.get()
-    provider = get_provider(settings)
 
     async def event_source():
         try:
+            settings = _settings_store.get()
+            provider = get_provider(settings)
             async for event in harness.run_turn(
                 client_id,
                 req.message,
@@ -46,17 +46,17 @@ async def chat(
                 registry=registry,
                 agent_registry=agent_registry,
                 provider=provider,
-                system_prompt_fallback=SYSTEM_PROMPT,
                 max_iterations=MAX_AGENT_ITERATIONS,
                 max_agent_calls=MAX_AGENT_CALLS_PER_TURN,
                 force_skills=req.force_skills,
                 session_title=session_title,
             ):
                 yield f"data: {event.model_dump_json()}\n\n"
-        except Exception:
-            # Log but don't expose full error to client
+        except Exception as exc:
             logger.exception("chat event_source error")
-            raise
+            from agent.models import ErrorEvent
+
+            yield f"data: {ErrorEvent(message=str(exc)).model_dump_json()}\n\n"
 
     return StreamingResponse(
         event_source(),

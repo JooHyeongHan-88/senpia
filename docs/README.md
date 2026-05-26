@@ -21,7 +21,7 @@
 | 특정 키워드에 반응하는 행동 지침 추가 | `SKILLS/` 에 `.md` 파일 추가 → [skills.md](skills.md) |
 | 특정 도메인 전담 서브 에이전트 추가 | `AGENTS/` 에 `.md` 파일 추가 → [agents.md](agents.md) |
 | 에이전트 기본 페르소나/응답 스타일 변경 | `PROMPTS/base.md` 수정 → [prompts.md](prompts.md) |
-| 새 사내 API 도구 등록 | `backend/agent/tools/` 에 `.py` 파일 추가 → `CLAUDE.md` 참조 |
+| 새 사내 API 도구 등록 | `backend/agent/tools/` 에 `.py` 파일 추가 → `.claude/rules/agent_extension.md` 참조 |
 
 ### 작업 흐름이 UI 에 표시되려면
 

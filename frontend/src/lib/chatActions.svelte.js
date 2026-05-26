@@ -19,6 +19,7 @@ import {
   getUpdateStatus,
   listSkills,
 } from "./api.js";
+import { getAppInfo } from "./settingsApi.js";
 import { parseSseStream } from "./sse.js";
 import { autoTitle } from "./format.js";
 import {
@@ -555,6 +556,14 @@ export async function initApp() {
   listSkills().then((skills) => {
     ui.availableSkills = skills;
   });
+
+  // 앱 이름 동적 로드 — title 과 사이드바 brand text 동기화.
+  getAppInfo()
+    .then(({ name }) => {
+      ui.appName = name;
+      document.title = name;
+    })
+    .catch(() => {});
 
   pollUpdate();
 }

@@ -1,6 +1,13 @@
-// Settings API 래퍼. /api/settings/* 엔드포인트만 담당한다.
+// Settings API 래퍼. /api/settings/* 및 /api/app-info 엔드포인트를 담당한다.
 
 const h = { "Content-Type": "application/json" };
+
+/** 앱 이름과 버전 정보 조회. */
+export async function getAppInfo() {
+  const r = await fetch("/api/app-info");
+  if (!r.ok) throw new Error(`app-info fetch failed: ${r.status}`);
+  return r.json();
+}
 
 /** 현재 저장된 설정 조회 (api_key는 마스킹된 값으로 반환). */
 export async function getSettings() {
@@ -28,6 +35,17 @@ export async function updateSettings(patch) {
 export async function listProviders() {
   const r = await fetch("/api/settings/providers");
   if (!r.ok) throw new Error(`providers fetch failed: ${r.status}`);
+  return r.json();
+}
+
+/**
+ * provider 가 제공하는 모델 목록 조회.
+ * @param {string} provider
+ * @returns {Promise<{ models: string[], error?: string }>}
+ */
+export async function listModels(provider) {
+  const r = await fetch(`/api/settings/models?provider=${encodeURIComponent(provider)}`);
+  if (!r.ok) throw new Error(`models fetch failed: ${r.status}`);
   return r.json();
 }
 

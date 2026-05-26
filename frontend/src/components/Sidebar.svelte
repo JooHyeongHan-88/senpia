@@ -4,6 +4,7 @@
   import { openSettings } from "../lib/settingsActions.svelte.js";
   import { relativeTimeBucket, BUCKET_ORDER } from "../lib/format.js";
   import SessionItem from "./SessionItem.svelte";
+  import ModelPicker from "./ModelPicker.svelte";
 
   let grouped = $derived.by(() => {
     const buckets = {};
@@ -29,7 +30,7 @@
           <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
         </svg>
       </span>
-      <span class="brand-text">My Agent</span>
+      <span class="brand-text">{ui.appName}</span>
     </div>
     <button class="icon-btn mobile-close" onclick={toggleSidebar} aria-label="사이드바 닫기">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -61,6 +62,8 @@
       {/each}
     {/if}
   </div>
+
+  <ModelPicker />
 
   <div class="footer">
     <button class="footer-btn" onclick={toggleTheme} title="테마 전환">

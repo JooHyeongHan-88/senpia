@@ -1,7 +1,61 @@
 // 설정 모달 액션. UI 는 이 함수들만 호출한다.
 
 import { ui } from "./state.svelte.js";
-import { getSettings, updateSettings, listProviders, testConnection } from "./settingsApi.js";
+import { getSettings, updateSettings, listProviders, testConnection, listModels } from "./settingsApi.js";
+
+// ---------- 모델 Picker ----------
+
+const MODEL_CACHE_TTL_MS = 5 * 60 * 1000; // 5분
+
+export function openModelPicker() {
+  if (ui.modelPickerOpen) return;
+  ui.modelPickerOpen = true;
+  // picker 열릴 때 현재 provider 의 모델 목록 자동 로드
+  loadModels(ui.currentProvider);
+}
+
+export function closeModelPicker() {
+  ui.modelPickerOpen = false;
+}
+
+export async function loadModels(provider, { force = false } = {}) {
+  if (!provider) return;
+
+  const cached = ui.modelListByProvider[provider];
+  if (!force && cached && !cached.loading && Date.now() - cached.loadedAt < MODEL_CACHE_TTL_MS) {
+    return;
+  }
+
+  ui.modelListByProvider = {
+    ...ui.modelListByProvider,
+    [provider]: { models: cached?.models ?? [], loading: true, loadedAt: cached?.loadedAt ?? 0 },
+  };
+
+  try {
+    const { models } = await listModels(provider);
+    ui.modelListByProvider = {
+      ...ui.modelListByProvider,
+      [provider]: { models, loading: false, loadedAt: Date.now() },
+    };
+  } catch {
+    ui.modelListByProvider = {
+      ...ui.modelListByProvider,
+      [provider]: { models: cached?.models ?? [], loading: false, loadedAt: cached?.loadedAt ?? 0 },
+    };
+  }
+}
+
+export async function selectModel(modelId) {
+  if (!modelId) return;
+  try {
+    await updateSettings({ model: modelId });
+    ui.currentModel = modelId;
+    ui.modelPickerOpen = false;
+  } catch (e) {
+    // 저장 실패 시 picker 는 열린 채로 유지하고 에러를 노출한다.
+    alert(`모델 변경 실패: ${e?.message ?? e}`);
+  }
+}
 
 // ---------- 모달 열기/닫기 ----------
 
@@ -10,7 +64,6 @@ export async function openSettings() {
   ui.settingsTestResult = null;
 
   try {
-    // 이미 providers 목록이 있으면 재사용.
     const [settings, providers] = await Promise.all([
       getSettings(),
       ui.providers.length ? Promise.resolve(ui.providers) : listProviders(),
@@ -18,19 +71,28 @@ export async function openSettings() {
 
     if (!ui.providers.length) ui.providers = providers;
 
-    // draft: api_key 편집 필드는 빈 칸으로 시작, 마스킹된 현재 키는 _maskedKey에 보관.
+    // draft.cache: provider id → 편집 상태.
+    // api_key 편집 필드는 빈 칸으로 시작하고, 마스킹된 현재 키는 _maskedKey 에 보관.
+    const cache = {};
+    for (const p of providers) {
+      const stored = settings.providers?.[p.id] ?? {};
+      cache[p.id] = {
+        model: stored.model ?? "",
+        api_key: "",
+        _maskedKey: stored.api_key ?? "",
+        base_url: stored.base_url ?? "",
+        clearKey: false,
+      };
+    }
+
     ui.settingsDraft = {
       provider: settings.provider,
-      model: settings.model,
-      api_key: "",
-      _maskedKey: settings.api_key ?? "",
-      base_url: settings.base_url ?? "",
-      clearKey: false,
+      cache,
     };
     ui.settingsOpen = true;
   } catch (e) {
     ui.settingsError = `설정 로드 실패: ${e?.message ?? e}`;
-    ui.settingsOpen = true; // 오류 메시지와 함께 모달 열기
+    ui.settingsOpen = true;
   }
 }
 
@@ -50,27 +112,30 @@ export async function saveSettings() {
   ui.settingsError = null;
 
   try {
-    const d = ui.settingsDraft;
-    const patch = {
-      provider: d.provider,
-      model: d.model,
-      base_url: d.base_url,
-      // temperature, max_tokens, system_prompt 는 config.py / 환경 변수로 관리 — UI 에서 덮어쓰지 않음.
-    };
+    const { provider, cache } = ui.settingsDraft;
 
-    // API 키 처리:
-    //  clearKey=true  → "" (키 삭제)
-    //  api_key에 값 입력됨 → 새 키로 교체
-    //  아무것도 안 했으면 → null (백엔드가 무시 = 기존 키 유지)
-    if (d.clearKey) {
-      patch.api_key = "";
-    } else if (d.api_key.trim()) {
-      patch.api_key = d.api_key.trim();
-    } else {
-      patch.api_key = null;
+    // 모든 provider 캐시를 한 번에 저장한다.
+    // api_key 처리: clearKey=true → "" (삭제), 입력됨 → 새 값, 아무것도 안 했으면 → null (유지).
+    const providers = {};
+    for (const [id, cfg] of Object.entries(cache)) {
+      let api_key;
+      if (cfg.clearKey) {
+        api_key = "";
+      } else if (cfg.api_key.trim()) {
+        api_key = cfg.api_key.trim();
+      } else {
+        api_key = null;
+      }
+      providers[id] = { model: cfg.model, api_key, base_url: cfg.base_url };
     }
 
-    await updateSettings(patch);
+    const patch = { provider, providers };
+    const updated = await updateSettings(patch);
+
+    // 저장 후 currentModel/currentProvider 동기화
+    ui.currentProvider = updated.provider;
+    ui.currentModel = updated.providers?.[updated.provider]?.model ?? "";
+
     ui.settingsOpen = false;
     ui.settingsDraft = null;
   } catch (e) {
@@ -88,16 +153,15 @@ export async function testConnectionAction() {
   ui.settingsTestResult = null;
 
   try {
-    const d = ui.settingsDraft;
-    // api_key가 입력된 경우 그 키로, 아니면 빈 문자열을 전달.
-    // 백엔드에서 빈 문자열이 오면 저장된 키를 fallback으로 사용한다.
-    const effectiveKey = d.clearKey ? "" : (d.api_key.trim() || "");
+    const { provider, cache } = ui.settingsDraft;
+    const cfg = cache[provider] ?? {};
+    const effectiveKey = cfg.clearKey ? "" : (cfg.api_key.trim() || "");
 
     const result = await testConnection({
-      provider: d.provider,
-      model: d.model,
+      provider,
+      model: cfg.model,
       api_key: effectiveKey,
-      base_url: d.base_url,
+      base_url: cfg.base_url,
     });
     ui.settingsTestResult = result;
   } catch (e) {
@@ -111,8 +175,10 @@ export async function testConnectionAction() {
 
 export async function loadSettingsForInit() {
   try {
-    const [, providers] = await Promise.all([getSettings(), listProviders()]);
+    const [settings, providers] = await Promise.all([getSettings(), listProviders()]);
     ui.providers = providers;
+    ui.currentProvider = settings.provider;
+    ui.currentModel = settings.providers?.[settings.provider]?.model ?? "";
   } catch {
     // 시작 시 실패해도 사용자에게 즉각 영향 없음 — 모달 열 때 다시 시도됨.
   }

@@ -113,7 +113,7 @@ run_turn(client_id, user_message, *, agent_registry, force_skills=None, ...)
 - `skills` 에 SKILLS 이름 등록 → 해당 트리거 매칭 시 오케스트레이터가 자동 위임 (Case 3 결정론 매핑).
 - `tools` 비어 있으면 에이전트에게 전체 도구 노출. 채워져 있으면 화이트리스트만.
 - `agent_registry` 가 `None` 이거나 빈 경우 → 단층 동작 (하위호환, SKILLS 직접 라우팅).
-- `TurnBudget`: 오케스트레이터 + 모든 서브 에이전트 provider 호출 합산 상한 (`max_agent_calls`). 같은 서브 에이전트 3회 연속 위임은 `loop-guard` 로 차단.
+- `TurnBudget`: 오케스트레이터 + 모든 서브 에이전트 provider 호출 합산 상한 (`max_agent_calls`, `APP_MAX_AGENT_CALLS_PER_TURN`, 기본 10). 같은 서브 에이전트 3회 연속 위임은 `loop-guard` 로 차단.
 
 ### Tool 등록 패턴 (`agent/tools/`)
 

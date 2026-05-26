@@ -7,6 +7,7 @@ export const ui = $state({
   streaming: false,
   theme: "light",
   sidebarOpen: false,
+  appName: "MyAgent",
 
   updateInfo: null,
   updateDismissed: false,
@@ -17,7 +18,7 @@ export const ui = $state({
 
   // Settings modal
   settingsOpen: false,
-  /** @type {null | { provider, model, api_key, _maskedKey, base_url, temperature, max_tokens, system_prompt, clearKey }} */
+  /** @type {null | { provider: string, cache: Record<string, { model, api_key, _maskedKey, base_url, clearKey }> }} */
   settingsDraft: null,
   settingsSaving: false,
   settingsError: null,
@@ -26,6 +27,13 @@ export const ui = $state({
   settingsTestResult: null,
   /** @type {Array<{ id, label, requires_api_key, requires_base_url, requires_model, suggested_models, docs_url }>} */
   providers: [],
+
+  // 현재 활성 provider / model — 사이드바 ModelPicker 에 표시
+  currentProvider: "",
+  currentModel: "",
+  /** @type {Record<string, { models: string[], loading: boolean, loadedAt: number }>} */
+  modelListByProvider: {},
+  modelPickerOpen: false,
 
   // 슬래시 커맨드용 — 부팅 시 GET /api/skills 결과 캐시.
   /** @type {Array<{ name: string, description: string, trigger: string[], priority: number }>} */

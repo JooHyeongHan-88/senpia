@@ -139,7 +139,6 @@ async def run_turn(
     prompt_registry: PromptRegistry,
     registry: ToolRegistry,
     provider,
-    system_prompt_fallback: str,
     max_iterations: int,
     agent_registry: AgentRegistry | None = None,
     max_agent_calls: int = 10,
@@ -157,7 +156,6 @@ async def run_turn(
         prompt_registry: PROMPTS/*.md 베이스 합성기.
         registry: ToolRegistry — provider 노출 + 실행.
         provider: astream(messages, tools) 를 구현한 LLM 어댑터.
-        system_prompt_fallback: PROMPTS/ 비어 있을 때 사용할 폴백 텍스트.
         max_iterations: 한 에이전트 turn 내 provider→tool→provider 반복 상한.
         agent_registry: AGENTS/*.md 카탈로그. None 이거나 비어 있으면 단층 동작
             (기존 SKILLS 직접 라우팅) — 하위호환.
@@ -193,9 +191,7 @@ async def run_turn(
 
         if has_agents:
             composed_system = _compose_orchestrator_system_prompt(
-                base=prompt_registry.compose(
-                    fallback=system_prompt_fallback, include_orchestrator=True
-                ),
+                base=prompt_registry.compose(include_orchestrator=True),
                 skills=skills,
                 state=state,
                 agent_registry=agent_registry,
@@ -203,9 +199,7 @@ async def run_turn(
         else:
             # 하위호환 — AGENTS 가 없으면 orchestrator.md 제외하고 단층 동작.
             composed_system = _compose_system_prompt(
-                prompt_registry.compose(
-                    fallback=system_prompt_fallback, include_orchestrator=False
-                ),
+                prompt_registry.compose(include_orchestrator=False),
                 skills,
                 state,
             )

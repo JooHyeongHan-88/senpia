@@ -11,6 +11,11 @@
     ui.providers.find((p) => p.id === ui.settingsDraft?.provider) ?? null,
   );
 
+  // 현재 선택된 프로바이더의 draft 캐시 슬롯
+  let cfg = $derived(
+    ui.settingsDraft?.cache?.[ui.settingsDraft?.provider] ?? null,
+  );
+
   function onBackdrop(e) {
     if (e.target === e.currentTarget) closeSettings();
   }
@@ -81,14 +86,14 @@
             {/if}
           </div>
 
-          {#if meta?.requires_model}
+          {#if cfg && meta?.requires_model}
             <div class="field">
               <label class="field-label" for="s-model">모델</label>
               <input
                 id="s-model"
                 class="input"
                 type="text"
-                bind:value={ui.settingsDraft.model}
+                bind:value={cfg.model}
                 placeholder={meta.suggested_models[0] ?? "모델명 입력"}
                 list="s-model-hints"
                 disabled={ui.settingsSaving}
@@ -103,54 +108,54 @@
             </div>
           {/if}
 
-          {#if meta?.requires_api_key}
+          {#if cfg && meta?.requires_api_key}
             <div class="field">
               <label class="field-label" for="s-apikey">API 키</label>
               <input
                 id="s-apikey"
                 class="input"
                 type="password"
-                bind:value={ui.settingsDraft.api_key}
-                placeholder={ui.settingsDraft._maskedKey
+                bind:value={cfg.api_key}
+                placeholder={cfg._maskedKey
                   ? "변경하려면 새 키 입력 (비워두면 유지)"
                   : "sk-xxx..."}
                 autocomplete="new-password"
-                disabled={ui.settingsSaving || ui.settingsDraft.clearKey}
+                disabled={ui.settingsSaving || cfg.clearKey}
               />
-              {#if ui.settingsDraft._maskedKey && !ui.settingsDraft.clearKey}
+              {#if cfg._maskedKey && !cfg.clearKey}
                 <p class="field-hint">
-                  현재 설정됨: <code class="masked">{ui.settingsDraft._maskedKey}</code>
+                  현재 설정됨: <code class="masked">{cfg._maskedKey}</code>
                   <button
                     type="button"
                     class="link-btn danger-link"
                     onclick={() => {
-                      ui.settingsDraft.clearKey = true;
-                      ui.settingsDraft.api_key = "";
+                      cfg.clearKey = true;
+                      cfg.api_key = "";
                     }}
                   >키 삭제</button>
                 </p>
               {/if}
-              {#if ui.settingsDraft.clearKey}
+              {#if cfg.clearKey}
                 <p class="field-hint danger-hint">
                   ⚠ 저장 시 API 키가 삭제됩니다.
                   <button
                     type="button"
                     class="link-btn"
-                    onclick={() => (ui.settingsDraft.clearKey = false)}
+                    onclick={() => (cfg.clearKey = false)}
                   >취소</button>
                 </p>
               {/if}
             </div>
           {/if}
 
-          {#if meta?.requires_base_url}
+          {#if cfg && meta?.requires_base_url}
             <div class="field">
               <label class="field-label" for="s-baseurl">Base URL</label>
               <input
                 id="s-baseurl"
                 class="input"
                 type="url"
-                bind:value={ui.settingsDraft.base_url}
+                bind:value={cfg.base_url}
                 placeholder="http://localhost:11434/v1"
                 disabled={ui.settingsSaving}
               />

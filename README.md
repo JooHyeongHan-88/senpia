@@ -226,7 +226,9 @@ App.exe 실행
 
 ### LLM 설정
 
+- 사이드바 하단 **ModelPicker**에서 현재 프로바이더·모델을 표시하고 클릭 한 번으로 빠르게 모델 전환
 - UI 기어 아이콘 → 설정 모달에서 프로바이더 선택 후 모델·API 키 입력 (프로바이더 순서: DTGPT → OpenAI Compatible → Mock)
+- 각 프로바이더의 접속 정보는 독립 슬롯에 저장 — 프로바이더 전환 후 다시 돌아와도 이전 설정 유지
 - `%APPDATA%\{APP_NAME}\settings.json` (frozen) 또는 `backend/settings/settings.json` (dev)에 영속화
 - **DTGPT**: Base URL은 `.env`의 `APP_DTGPT_BASE_URL`에서 고정 로드 — UI에 노출하지 않음. 기본 모델명은 `APP_DTGPT_MODEL`로 초기 시드
 - **OpenAI Compatible**: Base URL·모델·API 키 모두 UI에서 입력
