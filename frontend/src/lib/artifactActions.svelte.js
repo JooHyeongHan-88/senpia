@@ -104,9 +104,15 @@ function _findChip(id) {
 
 function _artifactLabel(kind, payload) {
   if (kind === "image") {
-    return payload.alt || payload.caption || "이미지";
+    const items = Array.isArray(payload?.items) ? payload.items : [];
+    if (items.length > 1) return `이미지 ${items.length}장`;
+    const single = items[0] ?? {};
+    return single.alt || single.caption || "이미지";
   }
   if (kind === "chart") {
+    const items = Array.isArray(payload?.items) ? payload.items : [];
+    if (items.length > 1) return `차트 ${items.length}개`;
+    const single = items[0] ?? {};
     const typeLabel = {
       scatter: "산점도",
       line: "꺾은선",
@@ -115,11 +121,53 @@ function _artifactLabel(kind, payload) {
       box: "박스플롯",
       heatmap: "히트맵",
     };
-    const t = typeLabel[payload.chart_type] || "차트";
-    return payload.title || t;
+    const t = typeLabel[single.chart_type] || "차트";
+    return single.title || t;
   }
   if (kind === "markdown") {
     return payload.title || "마크다운 문서";
   }
   return "아티팩트";
+}
+
+// ---------------------------------------------------------------------------
+// Lightbox — 이미지·차트 셀 클릭 시 확대 모달
+// ---------------------------------------------------------------------------
+
+/**
+ * 라이트박스를 연다. items 는 같은 payload 안의 형제 항목들이며 좌/우 화살표로
+ * 순회할 수 있다.
+ *
+ * @param {"image"|"chart"} kind
+ * @param {any[]} items
+ * @param {number} index
+ */
+export function openLightbox(kind, items, index = 0) {
+  if (!Array.isArray(items) || items.length === 0) return;
+  const safeIndex = Math.min(Math.max(0, index), items.length - 1);
+  // 프로퍼티 개별 변경으로 ui.lightbox 객체 레퍼런스를 유지한다.
+  // 객체 교체(spread) 시 open 외 다른 프로퍼티 변경도 $effect(() => open) 을 재실행시켜
+  // 모달 크기가 초기화되는 부작용이 발생한다.
+  ui.lightbox.kind = kind;
+  ui.lightbox.items = items;
+  ui.lightbox.index = safeIndex;
+  ui.lightbox.open = true;
+}
+
+export function closeLightbox() {
+  ui.lightbox.open = false;
+}
+
+export function lightboxNext() {
+  if (!ui.lightbox.open) return;
+  const total = ui.lightbox.items.length;
+  if (total <= 1) return;
+  ui.lightbox.index = (ui.lightbox.index + 1) % total;
+}
+
+export function lightboxPrev() {
+  if (!ui.lightbox.open) return;
+  const total = ui.lightbox.items.length;
+  if (total <= 1) return;
+  ui.lightbox.index = (ui.lightbox.index - 1 + total) % total;
 }

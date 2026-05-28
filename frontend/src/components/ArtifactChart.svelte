@@ -1,131 +1,200 @@
 <script>
-  import { onMount, onDestroy } from "svelte";
-  import * as echarts from "echarts";
+  import ChartCell from "./ChartCell.svelte";
+  import { openLightbox } from "../lib/artifactActions.svelte.js";
+
+  const PAGE_SIZE = 6;
 
   let { payload } = $props();
 
-  let container = $state(null);
-  let chart = null;
-  let renderError = $state(null);
+  let items = $derived(Array.isArray(payload?.items) ? payload.items : []);
+  let total = $derived(items.length);
+  let totalPages = $derived(Math.max(1, Math.ceil(total / PAGE_SIZE)));
 
-  function isDark() {
-    return document.documentElement.getAttribute("data-theme") === "dark";
-  }
+  let page = $state(1);
 
-  function initChart() {
-    if (!container) return;
-    if (chart) {
-      chart.dispose();
-      chart = null;
-    }
-    renderError = null;
-    try {
-      chart = echarts.init(container, isDark() ? "dark" : null, {
-        renderer: "canvas",
-      });
-      chart.setOption(payload.option);
-    } catch (err) {
-      chart?.dispose();
-      chart = null;
-      renderError = err?.message ?? "알 수 없는 오류";
-    }
-  }
-
-  // 테마 변경 감지 — data-theme attribute observer
-  let themeObserver = null;
-
-  onMount(() => {
-    initChart();
-
-    // 리사이즈 대응
-    const resizeObserver = new ResizeObserver(() => chart?.resize());
-    resizeObserver.observe(container);
-
-    // 테마 변경 대응
-    themeObserver = new MutationObserver(() => {
-      initChart();
-    });
-    themeObserver.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["data-theme"],
-    });
-
-    return () => {
-      resizeObserver.disconnect();
-    };
-  });
-
-  onDestroy(() => {
-    themeObserver?.disconnect();
-    chart?.dispose();
-  });
-
-  // payload.option 변경 시 차트 갱신
+  // items 가 바뀌면(다른 칩) 1페이지로 리셋.
   $effect(() => {
-    if (chart && payload.option) {
-      try {
-        chart.setOption(payload.option, { notMerge: true });
-        renderError = null;
-      } catch (err) {
-        chart.dispose();
-        chart = null;
-        renderError = err?.message ?? "알 수 없는 오류";
-      }
-    }
+    payload;
+    page = 1;
   });
+
+  // 페이지 변경 시 범위 클램프 — 외부 변화에 안전망.
+  $effect(() => {
+    if (page > totalPages) page = totalPages;
+    if (page < 1) page = 1;
+  });
+
+  let visibleItems = $derived(
+    items.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+  );
+
+  function goPrev() {
+    if (page > 1) page -= 1;
+  }
+
+  function goNext() {
+    if (page < totalPages) page += 1;
+  }
+
+  function openCellInLightbox(globalIndex) {
+    openLightbox("chart", items, globalIndex);
+  }
 </script>
 
-{#if renderError}
-  <div class="artifact-error">
-    <span class="error-icon">📊</span>
-    <span>차트를 그릴 수 없습니다.</span>
-    <small>{renderError}</small>
+<div class="artifact-chart-wrap">
+  <div class="toolbar">
+    <span class="chart-label">
+      {#if total === 1}
+        {items[0]?.title || "차트"}
+      {:else}
+        차트 그리드
+      {/if}
+    </span>
+    {#if total > 1}
+      <div class="pager" role="group" aria-label="페이지 네비게이션">
+        <button
+          type="button"
+          class="page-btn"
+          onclick={goPrev}
+          disabled={page <= 1}
+          aria-label="이전 페이지"
+        >
+          ‹
+        </button>
+        <span class="page-counter">페이지 {page} / {totalPages}</span>
+        <button
+          type="button"
+          class="page-btn"
+          onclick={goNext}
+          disabled={page >= totalPages}
+          aria-label="다음 페이지"
+        >
+          ›
+        </button>
+      </div>
+    {/if}
   </div>
-{:else}
-  <div class="chart-wrap">
-    <div class="chart-container" bind:this={container}></div>
-  </div>
-{/if}
+
+  {#if total === 0}
+    <div class="empty">표시할 차트가 없습니다.</div>
+  {:else if total === 1}
+    <!-- 단일 차트: 전체 영역 사용 + 클릭 가능 -->
+    <div class="single-area">
+      {#key items[0]}
+        <ChartCell
+          item={items[0]}
+          embedded={false}
+          onclick={() => openCellInLightbox(0)}
+        />
+      {/key}
+    </div>
+  {:else}
+    <!-- 다중 차트: 반응형 그리드. {#key} 로 페이지 전환 시 강제 remount → 인스턴스 dispose 보장 -->
+    {#key page}
+      <div class="grid">
+        {#each visibleItems as item, idx (idx)}
+          {@const globalIndex = (page - 1) * PAGE_SIZE + idx}
+          <ChartCell
+            {item}
+            embedded={true}
+            onclick={() => openCellInLightbox(globalIndex)}
+          />
+        {/each}
+      </div>
+    {/key}
+  {/if}
+</div>
 
 <style>
-  .chart-wrap {
+  .artifact-chart-wrap {
     display: flex;
     flex-direction: column;
     height: 100%;
-    padding: 8px;
-    box-sizing: border-box;
-  }
-
-  .chart-container {
-    flex: 1;
     min-height: 0;
-    width: 100%;
   }
 
-  .artifact-error {
+  .toolbar {
     display: flex;
-    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-elevated);
+    flex-shrink: 0;
+    gap: 8px;
+  }
+
+  .chart-label {
+    font-size: 12px;
+    color: var(--fg-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+  }
+
+  .pager {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  .page-btn {
+    width: 26px;
+    height: 26px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    border-radius: var(--radius-sm);
+    color: var(--fg);
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
-    height: 100%;
-    padding: 24px;
-    margin: 16px;
-    border: 2px dashed var(--color-danger, #e53e3e);
-    border-radius: var(--radius);
-    color: var(--color-danger, #e53e3e);
-    font-size: 13px;
-    text-align: center;
+    transition: background 0.12s;
   }
 
-  .artifact-error .error-icon {
-    font-size: 28px;
+  .page-btn:hover:not(:disabled) {
+    background: var(--bg-hover);
   }
 
-  .artifact-error small {
+  .page-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+
+  .page-counter {
     font-size: 11px;
     color: var(--fg-muted);
-    word-break: break-all;
-    max-width: 100%;
+    font-variant-numeric: tabular-nums;
+    padding: 0 6px;
+  }
+
+  .single-area {
+    flex: 1;
+    padding: 8px;
+    box-sizing: border-box;
+    min-height: 0;
+  }
+
+  .grid {
+    flex: 1;
+    overflow-y: auto;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 12px;
+    padding: 12px;
+    align-content: start;
+  }
+
+  .empty {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--fg-muted);
+    font-size: 13px;
   }
 </style>

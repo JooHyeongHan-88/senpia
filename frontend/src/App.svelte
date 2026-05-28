@@ -11,6 +11,7 @@
   import UpdateModal from "./components/UpdateModal.svelte";
   import SettingsModal from "./components/SettingsModal.svelte";
   import ArtifactPanel from "./components/ArtifactPanel.svelte";
+  import ArtifactLightbox from "./components/ArtifactLightbox.svelte";
 
   onMount(() => {
     initApp();
@@ -35,6 +36,7 @@
 <UpdateBanner />
 <UpdateModal />
 <SettingsModal />
+<ArtifactLightbox />
 
 <style>
   .app {

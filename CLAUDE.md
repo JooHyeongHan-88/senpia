@@ -90,9 +90,9 @@ Mock 시나리오 트리거 (브라우저에서 입력):
 |---|---|---|
 | A (echo) | (그 외 모든 입력) | 기본 스트리밍 |
 | B (ask_user) | `추천해줘`, `골라줘` | ReasoningBlock, AskUserCard(both) |
-| C (time_check) | `지금 시간`, `현재 시각` | SkillBadge, ArtifactImage, ArtifactMarkdown |
-| D (data_summary) | `데이터 요약`, `요약 통계` | AgentTrail, TodoProgress, ArtifactChart |
-| E (composite) | `전체 분석 보고서`, `종합 보고서` | 2단 sub-agent, ArtifactChart+ArtifactMarkdown |
+| C (time_check) | `지금 시간`, `현재 시각` | SkillBadge, ArtifactImage(1장), ArtifactMarkdown |
+| D (data_summary) | `데이터 요약`, `요약 통계` | AgentTrail, TodoProgress, ArtifactChart(4개 그리드) |
+| E (composite) | `전체 분석 보고서`, `종합 보고서` | 2단 sub-agent, ArtifactChart(7개·2페이지)+ArtifactMarkdown+ArtifactImage(10장 갤러리) |
 
 `APP_ALLOWED_LIBRARIES=scripts`는 현재 Mock 시나리오를 위해 활성화된 상태다. 운영 시 도메인 라이브러리로 교체하거나 제거한다.
 

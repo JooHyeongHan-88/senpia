@@ -147,6 +147,7 @@ run_turn(client_id, user_message, *, agent_registry, force_skills=None, ...)
 
 - **시그니처에서 자동 스키마 생성**: 각 파라미터의 `Annotated[T, "설명"]` 을 Pydantic `create_model` 로 묶어 JSON Schema (LLM 노출) + `TypeAdapter` (입력 검증) 를 1회 생성. 매 turn 재생성 없음.
 - **타입·형식 가드 통합**: `date_from="오늘"` 처럼 형식이 깨진 경우도 `MissingSlot` 으로 변환되어 동일한 `AskUserEvent` 흐름으로 사용자에게 친근한 한국어 재질문.
+- **중첩 Pydantic 모델 인자**: `_execute_tool` 이 `model_validate` 후 `{name: getattr(parsed, name) for name in type(parsed).model_fields}` 로 kwargs 를 추출한다. `model_dump()` 를 쓰면 `list[ImageItem]` 같은 중첩 모델이 `list[dict]` 로 직렬화돼 도구 함수의 타입 기대와 불일치한다 — **절대 `model_dump()` 로 바꾸지 말 것**.
 - **`ToolResult` 구조화 응답**: 함수는 `str` 또는 `ToolResult(content, data, is_error)` 반환. LLM 컨텍스트엔 `content` 만, 프론트엔드엔 `data` 까지 노출.
 - **Timeout 일등시민**: 데코레이터의 `timeout_seconds` 가 매 호출 `asyncio.wait_for` 로 강제. 기본값은 `APP_TOOL_DEFAULT_TIMEOUT` (30s). 초과 시 `ToolResult(is_error=True, content="[timeout] ...")` 자동 반환.
 - **Sentinel 도구 마커**: `add_todo` / `complete_todo` / `call_sub_agent` / `complete_subagent` 같이 harness 가 tool_call 분기에서 가로채는 도구는 `sentinel=True` 로 등록. `_execute_tool` 에 도달하면 명시적 에러.

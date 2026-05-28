@@ -49,6 +49,8 @@ import re
 import shutil
 import uuid
 from collections.abc import AsyncIterator
+from typing import Any
+from urllib.parse import quote
 
 from agent.models import (
     DeltaEvent,
@@ -292,7 +294,7 @@ async def _scenario_C_time_check(
         yield DoneEvent()
         return
 
-    # 턴 2: 시계 테마 이미지 표시.
+    # 턴 2: 시계 테마 이미지 표시 (단일 항목도 1-element list 로 전달).
     if not has_img:
         favicon_path = _ensure_favicon_artifact()
         yield ToolCallEvent(
@@ -300,9 +302,13 @@ async def _scenario_C_time_check(
                 id=f"{_C_IMG_PREFIX}{uuid.uuid4().hex[:8]}",
                 name="display_image",
                 arguments={
-                    "source": favicon_path,
-                    "alt": "시간 확인 데모 이미지",
-                    "caption": "현재 시각 확인 작업의 시각화 자료",
+                    "images": [
+                        {
+                            "source": favicon_path,
+                            "alt": "시간 확인 데모 이미지",
+                            "caption": "현재 시각 확인 작업의 시각화 자료",
+                        }
+                    ],
                 },
             )
         )
@@ -546,34 +552,13 @@ async def _scenario_D_analyst_sub(
                 },
             )
         )
-        # 차트 series 는 stats 의 일반화된 지표 라벨만 — 구체 값은 namespace 에서 조회.
-        # Mock 은 실제 값을 알지 못하므로 placeholder 형태로만 yield 하지 않고,
-        # 6개 지표 라벨을 갖는 막대 차트 구조만 전달한다. Harness 가 실제 stats 변수를
-        # series 에 주입하는 패턴이 아니므로 mock 은 데모용 더미 값을 사용한다.
-        # (실제 LLM 은 tool_result 에서 stats 값을 보고 series 를 구성한다)
+        # Mock 은 실제 namespace 값을 알지 못하므로 데모용 더미 데이터로 4개 차트 구성.
+        # 한 번의 display_chart 호출에 list 로 전달해 패널의 반응형 그리드 렌더링을 검증.
         yield ToolCallEvent(
             call=ToolCall(
                 id=f"{_D_SUB_CHART_PREFIX}{uuid.uuid4().hex[:8]}",
                 name="display_chart",
-                arguments={
-                    "chart_type": "bar",
-                    "title": "요약 통계량 (samples)",
-                    "x_label": "지표",
-                    "y_label": "값",
-                    "series": [
-                        {
-                            "name": "stats",
-                            "data": [
-                                ["count", 30],
-                                ["mean", 7.5],
-                                ["median", 7.3],
-                                ["stdev", 4.6],
-                                ["min", -1.6],
-                                ["max", 16.1],
-                            ],
-                        }
-                    ],
-                },
+                arguments={"charts": _scenario_D_charts()},
             )
         )
         yield ToolCallEvent(
@@ -853,30 +838,13 @@ async def _scenario_E_analyst_sub(
         return
 
     # 턴 3: display_chart + complete_todo(2).
+    # E 시나리오는 차트 7개를 한 번에 전달 → 페이지네이션(1페이지 6 + 2페이지 1) 검증.
     if not has_chart and len(task_ids) >= 2:
         yield ToolCallEvent(
             call=ToolCall(
                 id=f"{_E_ANALYST_CHART_PREFIX}{uuid.uuid4().hex[:8]}",
                 name="display_chart",
-                arguments={
-                    "chart_type": "bar",
-                    "title": "요약 통계량 (composite 시나리오)",
-                    "x_label": "지표",
-                    "y_label": "값",
-                    "series": [
-                        {
-                            "name": "stats",
-                            "data": [
-                                ["count", 24],
-                                ["mean", 8.1],
-                                ["median", 7.9],
-                                ["stdev", 5.2],
-                                ["min", -1.2],
-                                ["max", 17.4],
-                            ],
-                        }
-                    ],
-                },
+                arguments={"charts": _scenario_E_charts()},
             )
         )
         yield ToolCallEvent(
@@ -923,6 +891,7 @@ async def _scenario_E_analyst_sub(
 
 _E_WRITER_SAVE_PREFIX = "mock-E-writer-save-"
 _E_WRITER_MD_PREFIX = "mock-E-writer-md-"
+_E_WRITER_GALLERY_PREFIX = "mock-E-writer-gallery-"
 _E_WRITER_FINISH_PREFIX = "mock-E-writer-finish-"
 
 _E_REPORT_BODY = """# 종합 분석 리포트
@@ -965,9 +934,14 @@ _E_REPORT_BODY = """# 종합 분석 리포트
 async def _scenario_E_writer_sub(
     messages: list[Message],
 ) -> AsyncIterator[StreamEvent]:
-    """E writer sub — save_artifact + display_markdown 동시 → complete_subagent."""
-    has_save = _has_recent_tool_result(messages, _E_WRITER_SAVE_PREFIX)
+    """E writer sub — save_artifact + display_markdown → display_image(10장) → complete_subagent.
 
+    이미지 갤러리는 패널의 무한 스크롤·N/M 카운터·라이트박스 UX 를 한 번에 검증한다.
+    """
+    has_save = _has_recent_tool_result(messages, _E_WRITER_SAVE_PREFIX)
+    has_gallery = _has_recent_tool_result(messages, _E_WRITER_GALLERY_PREFIX)
+
+    # 턴 1: report.md 저장 + display_markdown.
     if not has_save:
         yield ToolCallEvent(
             call=ToolCall(
@@ -993,10 +967,23 @@ async def _scenario_E_writer_sub(
         yield DoneEvent()
         return
 
+    # 턴 2: 색상 카드 10장 갤러리 — list 형태 display_image 검증.
+    if not has_gallery:
+        yield ToolCallEvent(
+            call=ToolCall(
+                id=f"{_E_WRITER_GALLERY_PREFIX}{uuid.uuid4().hex[:8]}",
+                name="display_image",
+                arguments={"images": _scenario_E_gallery_items()},
+            )
+        )
+        yield DoneEvent()
+        return
+
+    # 턴 3: 완료 보고.
     summary = (
         "Task Summary:\n"
         "- report.md 생성 (요약·핵심 지표 표·인사이트 3건·후속 액션·인용)\n"
-        "- ArtifactMarkdown 으로 사이드 패널에 렌더링 완료"
+        "- ArtifactMarkdown 으로 리포트 렌더링, 색상 카드 10장 갤러리 추가 표시"
     )
     yield ToolCallEvent(
         call=ToolCall(
@@ -1100,3 +1087,220 @@ def _compose_reply(last_user: Message | None) -> str:
         f"[mock] '{last_user.content}' 라고 하셨네요. "
         "실제 LLM 이 연결되면 이 자리에 답변이 옵니다."
     )
+
+
+# =============================================================================
+# 시각화 데모 데이터 — D/E 시나리오의 display_chart / display_image 항목
+# =============================================================================
+
+
+def _scenario_D_charts() -> list[dict[str, Any]]:
+    """D 시나리오 — 4종 차트로 반응형 그리드 + 단일 페이지 렌더링 검증."""
+    return [
+        {
+            "chart_type": "bar",
+            "title": "요약 통계량 (samples)",
+            "x_label": "지표",
+            "y_label": "값",
+            "series": [
+                {
+                    "name": "stats",
+                    "data": [
+                        ["count", 30],
+                        ["mean", 7.5],
+                        ["median", 7.3],
+                        ["stdev", 4.6],
+                        ["min", -1.6],
+                        ["max", 16.1],
+                    ],
+                }
+            ],
+        },
+        {
+            "chart_type": "line",
+            "title": "samples 추세 (인덱스순)",
+            "x_label": "인덱스",
+            "y_label": "값",
+            "series": [
+                {
+                    "name": "samples",
+                    "data": [round(i * 0.5, 2) for i in range(30)],
+                }
+            ],
+        },
+        {
+            "chart_type": "scatter",
+            "title": "samples vs 이상치 점수",
+            "x_label": "값",
+            "y_label": "이상치 점수",
+            "series": [
+                {
+                    "name": "anomaly",
+                    "data": [[i * 0.5, ((i * 7) % 11 - 5) * 0.4] for i in range(30)],
+                }
+            ],
+        },
+        {
+            "chart_type": "box",
+            "title": "분포 박스플롯",
+            "x_label": "그룹",
+            "y_label": "값",
+            "series": [
+                {
+                    "name": "분포",
+                    "data": [[-1.6, 4.0, 7.3, 11.0, 16.1]],
+                }
+            ],
+            "extra_option": {"xAxis": {"data": ["samples"]}},
+        },
+    ]
+
+
+def _scenario_E_charts() -> list[dict[str, Any]]:
+    """E analyst sub — 7개 차트로 페이지네이션(1페이지 6 + 2페이지 1) 검증."""
+    return [
+        {
+            "chart_type": "bar",
+            "title": "요약 통계량 (composite)",
+            "x_label": "지표",
+            "y_label": "값",
+            "series": [
+                {
+                    "name": "stats",
+                    "data": [
+                        ["count", 24],
+                        ["mean", 8.1],
+                        ["median", 7.9],
+                        ["stdev", 5.2],
+                        ["min", -1.2],
+                        ["max", 17.4],
+                    ],
+                }
+            ],
+        },
+        {
+            "chart_type": "line",
+            "title": "samples 시계열",
+            "x_label": "인덱스",
+            "y_label": "값",
+            "series": [
+                {
+                    "name": "samples",
+                    "data": [round(i * 0.7, 2) for i in range(24)],
+                }
+            ],
+        },
+        {
+            "chart_type": "scatter",
+            "title": "samples 산점도",
+            "x_label": "x",
+            "y_label": "y",
+            "series": [
+                {
+                    "name": "관측",
+                    "data": [[i * 0.7, ((i * 5) % 9 - 4) * 0.3] for i in range(24)],
+                }
+            ],
+        },
+        {
+            "chart_type": "box",
+            "title": "그룹별 분포 박스플롯",
+            "x_label": "그룹",
+            "y_label": "값",
+            "series": [
+                {
+                    "name": "분포",
+                    "data": [
+                        [-1.2, 4.5, 7.9, 11.8, 17.4],
+                        [0.2, 5.0, 8.3, 11.5, 16.0],
+                    ],
+                }
+            ],
+            "extra_option": {"xAxis": {"data": ["A", "B"]}},
+        },
+        {
+            "chart_type": "histogram",
+            "title": "값 분포 히스토그램",
+            "x_label": "구간",
+            "y_label": "빈도",
+            "series": [
+                {
+                    "name": "빈도",
+                    "data": [
+                        ["~0", 2],
+                        ["0~5", 6],
+                        ["5~10", 9],
+                        ["10~15", 5],
+                        ["15+", 2],
+                    ],
+                }
+            ],
+        },
+        {
+            "chart_type": "heatmap",
+            "title": "상관 히트맵",
+            "x_label": "지표 X",
+            "y_label": "지표 Y",
+            "series": [
+                {
+                    "name": "corr",
+                    "data": [
+                        [0, 0, 1.0],
+                        [0, 1, 0.3],
+                        [1, 0, 0.3],
+                        [1, 1, 1.0],
+                    ],
+                }
+            ],
+            "extra_option": {
+                "xAxis": {"data": ["mean", "stdev"]},
+                "yAxis": {"data": ["mean", "stdev"]},
+            },
+        },
+        {
+            "chart_type": "bar",
+            "title": "그룹별 평균 비교",
+            "x_label": "그룹",
+            "y_label": "평균",
+            "series": [
+                {"name": "그룹A", "data": [["분기1", 7.5], ["분기2", 8.2]]},
+                {"name": "그룹B", "data": [["분기1", 6.9], ["분기2", 7.8]]},
+            ],
+        },
+    ]
+
+
+def _scenario_E_gallery_items() -> list[dict[str, Any]]:
+    """E writer sub — 색상 카드 10장 SVG data URI 갤러리 검증용 데이터."""
+    palette = [
+        ("#FF6B6B", "01"),
+        ("#FFA94D", "02"),
+        ("#FFD43B", "03"),
+        ("#69DB7C", "04"),
+        ("#4DABF7", "05"),
+        ("#9775FA", "06"),
+        ("#F783AC", "07"),
+        ("#63E6BE", "08"),
+        ("#FFC078", "09"),
+        ("#74C0FC", "10"),
+    ]
+    return [
+        {
+            "source": _color_card_data_uri(color, label),
+            "alt": f"색상 카드 {label}",
+            "caption": f"갤러리 카드 #{label} — {color}",
+        }
+        for color, label in palette
+    ]
+
+
+def _color_card_data_uri(color: str, label: str) -> str:
+    """단색 카드 SVG data URI 를 생성한다. (mock 갤러리 검증용)"""
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200">'
+        f'<rect width="320" height="200" fill="{color}"/>'
+        '<text x="160" y="115" font-family="sans-serif" font-size="56" '
+        f'fill="white" text-anchor="middle" font-weight="700">{label}</text>'
+        "</svg>"
+    )
+    return f"data:image/svg+xml,{quote(svg)}"

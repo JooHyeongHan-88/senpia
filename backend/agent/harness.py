@@ -1425,7 +1425,12 @@ async def _execute_tool(call: ToolCall, registry: ToolRegistry) -> ToolResult:
     # 도구 함수 본체에서 타입 불일치 에러가 발생하는 경우를 사전 차단한다.
     try:
         parsed = tool.input_model.model_validate(call.arguments or {})
-        coerced_args = parsed.model_dump()
+        # model_dump() 는 중첩 Pydantic 모델(ImageItem 등)을 dict 로 직렬화해
+        # 도구 함수가 기대하는 타입과 불일치가 생긴다. getattr 로 실제 Python
+        # 객체(model 인스턴스 포함)를 그대로 추출한다.
+        coerced_args = {
+            name: getattr(parsed, name) for name in type(parsed).model_fields
+        }
     except Exception as exc:
         logger.warning("tool '%s' argument coercion failed: %s", call.name, exc)
         return ToolResult(

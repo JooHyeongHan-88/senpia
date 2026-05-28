@@ -58,6 +58,16 @@ export const ui = $state({
 
   // 사용자가 마우스 드래그로 조절한 좌측 사이드바 너비 (px). initApp 에서 로드.
   sidebarWidth: 264,
+
+  // 아티팩트 라이트박스 — 이미지·차트 셀 클릭 시 리사이즈 가능한 모달로 확대 표시.
+  // items 는 활성 칩의 payload.items 를 그대로 참조하며 index 로 현재 보고 있는 항목을 가리킨다.
+  /** @type {{ open: boolean, kind: "image"|"chart"|null, items: any[], index: number }} */
+  lightbox: {
+    open: false,
+    kind: null,
+    items: [],
+    index: 0,
+  },
 });
 
 export function activeSession() {

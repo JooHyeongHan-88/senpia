@@ -27,6 +27,11 @@ components/
   SettingsModal.svelte  LLM 설정 모달 (프로바이더·모델·API키·Base URL)
   UpdateBanner.svelte   업데이트 알림 배너
   UpdateModal.svelte    업데이트 진행 모달
+  ArtifactPanel.svelte  우측 아티팩트 패널 — 탭 바(칩) + 활성 칩 콘텐츠 렌더링
+  ArtifactImage.svelte  이미지 갤러리 — payload.items[] 기반, IntersectionObserver lazy load
+  ArtifactChart.svelte  ECharts 그리드 — 페이지당 6개 페이지네이션, {#key page} remount
+  ChartCell.svelte      단일 ECharts 인스턴스 자가 관리 — onMount init·onDestroy dispose·ResizeObserver
+  ArtifactLightbox.svelte  전체화면 확대 모달 — drag-to-resize 핸들(우하단), 좌우 키 네비게이션
 ```
 
 ## 상태($state) 패턴
@@ -56,9 +61,16 @@ ui.activeArtifactId;
 ui.artifactPanelOpen;
 ui.artifactWidth;                      // 사용자 드래그 조절 패널 너비(px)
 
+// 아티팩트 라이트박스
+ui.lightbox.open;                      // boolean
+ui.lightbox.kind;                      // "image" | "chart" | null
+ui.lightbox.items;                     // 활성 칩의 payload.items[] 참조
+ui.lightbox.index;                     // 현재 보고 있는 항목 인덱스
+
 // 변형 — 반드시 액션 함수 경유
 import { sendMessage, createSession } from "$lib/chatActions.svelte.js";
 import { openSettings, saveSettings, openModelPicker, selectModel } from "$lib/settingsActions.svelte.js";
+import { openLightbox, closeLightbox, lightboxNext, lightboxPrev } from "$lib/artifactActions.svelte.js";
 ```
 
 컴포넌트가 `ui.*`를 직접 write하는 것은 `SettingsModal` 내 draft 편집 필드만 허용한다 (`ui.settingsDraft.*`). 그 외는 전부 액션 함수가 담당.

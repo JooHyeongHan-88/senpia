@@ -1,56 +1,135 @@
 <script>
+  import { onMount, onDestroy } from "svelte";
+  import { openLightbox } from "../lib/artifactActions.svelte.js";
+
+  const PAGE_SIZE = 6;
+
   let { payload } = $props();
 
-  let loadError = $state(false);
+  // payload.items 는 list. 백워드 안전망: 잘못된 형태가 들어와도 빈 list 로 처리.
+  let items = $derived(Array.isArray(payload?.items) ? payload.items : []);
+  let total = $derived(items.length);
 
-  // src 가 바뀌면 에러 상태 초기화
+  // 가시 개수 — IntersectionObserver 가 sentinel 진입 시 +PAGE_SIZE.
+  // total 은 $derived 이라 초기값 캡쳐 경고가 나오므로 항상 PAGE_SIZE 로 시작하고
+  // 아래 $effect 에서 items 길이에 맞춰 클램프한다.
+  let visibleCount = $state(PAGE_SIZE);
+  let visible = $derived(items.slice(0, Math.min(visibleCount, total)));
+
+  // 로드 실패한 항목의 인덱스 집합 — 개별 카드에서 placeholder 표시.
+  let failedSet = $state(new Set());
+
+  // items 가 바뀌면(다른 칩으로 전환) 가시 개수 리셋.
   $effect(() => {
-    payload?.src;
-    loadError = false;
+    payload;
+    visibleCount = Math.min(PAGE_SIZE, total);
+    failedSet = new Set();
   });
 
-  function openInNewTab() {
-    window.open(payload.src, "_blank", "noopener,noreferrer");
+  let sentinelEl = $state(null);
+  let observer = null;
+
+  function ensureObserver() {
+    if (observer || !sentinelEl) return;
+    observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting && visibleCount < total) {
+            visibleCount = Math.min(visibleCount + PAGE_SIZE, total);
+          }
+        }
+      },
+      { rootMargin: "120px" },
+    );
+    observer.observe(sentinelEl);
+  }
+
+  // sentinelEl 가 마운트되면 observer 부착, 사라지면 해제.
+  $effect(() => {
+    if (sentinelEl) ensureObserver();
+    return () => {
+      observer?.disconnect();
+      observer = null;
+    };
+  });
+
+  onMount(() => {
+    ensureObserver();
+  });
+
+  onDestroy(() => {
+    observer?.disconnect();
+  });
+
+  function handleImageError(idx) {
+    failedSet = new Set([...failedSet, idx]);
+  }
+
+  function handleCardClick(idx) {
+    openLightbox("image", items, idx);
   }
 </script>
 
 <div class="artifact-image-wrap">
   <div class="toolbar">
-    <span class="img-label">{payload.alt || payload.caption || "이미지"}</span>
-    <button class="open-btn" onclick={openInNewTab} title="새 탭에서 열기">
-      <svg
-        width="14"
-        height="14"
-        viewBox="0 0 16 16"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="1.8"
-      >
-        <path d="M6 3H3a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-3" />
-        <path d="M10 2h4v4M14 2 8 8" />
-      </svg>
-      새 탭
-    </button>
+    <span class="img-label">
+      {#if total === 1}
+        {items[0]?.alt || items[0]?.caption || "이미지"}
+      {:else}
+        이미지 갤러리
+      {/if}
+    </span>
+    {#if total > 1}
+      <span class="counter" aria-live="polite">
+        {visibleCount} / {total}장 표시
+      </span>
+    {/if}
   </div>
 
-  {#if loadError}
-    <div class="artifact-error">
-      <span class="error-icon">🖼️</span>
-      <span>이미지를 불러올 수 없습니다.</span>
-      <small>{payload.src}</small>
-    </div>
+  {#if total === 0}
+    <div class="empty">표시할 이미지가 없습니다.</div>
   {:else}
-    <div class="img-container">
-      <img
-        src={payload.src}
-        alt={payload.alt || ""}
-        loading="lazy"
-        onerror={() => (loadError = true)}
-      />
+    <div class="scroll-area">
+      <div class="gallery">
+        {#each visible as item, idx (idx)}
+          <figure class="card">
+            <button
+              type="button"
+              class="card-btn"
+              onclick={() => handleCardClick(idx)}
+              aria-label={item.alt || item.caption || `이미지 ${idx + 1}`}
+            >
+              {#if failedSet.has(idx)}
+                <div class="card-error">
+                  <span class="error-icon">🖼️</span>
+                  <span>이미지를 불러올 수 없습니다.</span>
+                  <small>{item.src}</small>
+                </div>
+              {:else}
+                <img
+                  src={item.src}
+                  alt={item.alt || ""}
+                  loading="lazy"
+                  onerror={() => handleImageError(idx)}
+                />
+              {/if}
+            </button>
+            {#if item.caption}
+              <figcaption class="caption">{item.caption}</figcaption>
+            {/if}
+          </figure>
+        {/each}
+
+        <!-- 무한 스크롤 sentinel — 가시 영역에 더 로드할 항목이 남았을 때만 노출 -->
+        {#if visibleCount < total}
+          <div bind:this={sentinelEl} class="sentinel" aria-hidden="true">
+            <span class="sentinel-dot"></span>
+            <span class="sentinel-dot"></span>
+            <span class="sentinel-dot"></span>
+          </div>
+        {/if}
+      </div>
     </div>
-    {#if payload.caption}
-      <p class="caption">{payload.caption}</p>
-    {/if}
   {/if}
 </div>
 
@@ -60,6 +139,7 @@
     flex-direction: column;
     height: 100%;
     gap: 0;
+    min-height: 0;
   }
 
   .toolbar {
@@ -78,82 +158,148 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 70%;
+    max-width: 60%;
   }
 
-  .open-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
+  .counter {
     font-size: 11px;
-    font-weight: 500;
-    color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-    border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+    color: var(--fg-muted);
+    font-variant-numeric: tabular-nums;
+    background: var(--bg);
+    border: 1px solid var(--border);
     border-radius: var(--radius-sm);
-    padding: 3px 9px;
-    cursor: pointer;
-    transition: background 0.15s;
+    padding: 2px 8px;
     flex-shrink: 0;
   }
 
-  .open-btn:hover {
-    background: color-mix(in srgb, var(--accent) 20%, transparent);
-  }
-
-  .img-container {
+  .scroll-area {
     flex: 1;
-    overflow: auto;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 16px;
+    overflow-y: auto;
     min-height: 0;
   }
 
-  img {
-    max-width: 100%;
-    max-height: 100%;
-    object-fit: contain;
-    border-radius: var(--radius-sm);
+  .gallery {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    padding: 16px;
+    max-width: 720px;
+    margin: 0 auto;
+  }
+
+  .card {
+    margin: 0;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .card-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0;
+    cursor: zoom-in;
+    width: 100%;
+    overflow: hidden;
+    transition: border-color 0.12s, box-shadow 0.12s;
+    line-height: 0;
+  }
+
+  .card-btn:hover {
+    border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
     box-shadow: var(--shadow-md);
+  }
+
+  .card-btn img {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-height: 460px;
+    object-fit: contain;
+    background: var(--bg);
   }
 
   .caption {
     font-size: 12px;
     color: var(--fg-muted);
     text-align: center;
-    padding: 8px 14px;
     margin: 0;
-    flex-shrink: 0;
-    border-top: 1px solid var(--border);
+    line-height: 1.5;
+    max-width: 100%;
   }
 
-  .artifact-error {
-    flex: 1;
+  .card-error {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 8px;
-    padding: 24px;
-    margin: 16px;
-    border: 2px dashed var(--color-danger, #e53e3e);
-    border-radius: var(--radius);
+    gap: 6px;
+    padding: 32px 16px;
     color: var(--color-danger, #e53e3e);
-    font-size: 13px;
-    text-align: center;
+    font-size: 12px;
+    line-height: 1.5;
   }
 
-  .artifact-error .error-icon {
-    font-size: 28px;
+  .card-error .error-icon {
+    font-size: 24px;
     filter: grayscale(0.3);
   }
 
-  .artifact-error small {
-    font-size: 11px;
+  .card-error small {
+    font-size: 10px;
     color: var(--fg-muted);
     word-break: break-all;
-    max-width: 100%;
+    text-align: center;
+  }
+
+  .empty {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--fg-muted);
+    font-size: 13px;
+  }
+
+  .sentinel {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 16px;
+    width: 100%;
+  }
+
+  .sentinel-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--fg-muted);
+    animation: pulse 1.2s infinite ease-in-out both;
+  }
+
+  .sentinel-dot:nth-child(2) {
+    animation-delay: 0.15s;
+  }
+
+  .sentinel-dot:nth-child(3) {
+    animation-delay: 0.3s;
+  }
+
+  @keyframes pulse {
+    0%,
+    80%,
+    100% {
+      opacity: 0.25;
+      transform: scale(0.85);
+    }
+    40% {
+      opacity: 1;
+      transform: scale(1);
+    }
   }
 </style>

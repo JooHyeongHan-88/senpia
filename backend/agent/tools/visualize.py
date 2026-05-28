@@ -2,6 +2,9 @@
 
 LLM 이 이 도구를 호출하면 harness 가 ToolResultEvent.data 를 그대로 프론트엔드에
 전달하고, 프론트엔드는 data.kind 로 분기해 ArtifactPanel 에 렌더링한다.
+
+display_image / display_chart 는 한 번의 호출로 여러 항목을 list 로 전달받는다.
+프론트엔드는 items[] 를 페이지네이션·lazy load 로 렌더링한다.
 """
 
 from __future__ import annotations
@@ -10,25 +13,64 @@ import copy
 import logging
 from typing import Annotated, Any, Literal
 
+from pydantic import BaseModel
+
 from agent.models import ToolResult
 from agent.registries.tools import register_tool
 
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# Pydantic 입력 항목 모델 — list 인자로 받는 단일 객체 형태
+# ---------------------------------------------------------------------------
+
+
+class ImageItem(BaseModel):
+    """display_image 의 단일 이미지 항목."""
+
+    source: Annotated[
+        str,
+        "이미지 경로(assets/... 또는 workspace/... 또는 result/...), 절대 URL, 또는 data URI",
+    ]
+    alt: Annotated[str, "이미지 대체 텍스트 (접근성·AI 요약용)"] = ""
+    caption: Annotated[str, "이미지 아래 표시할 짧은 설명"] = ""
+
+
+class ChartItem(BaseModel):
+    """display_chart 의 단일 차트 항목.
+
+    series + chart_type 로 ECharts option 을 자동 생성하거나,
+    option 으로 완전한 ECharts option 을 직접 전달할 수 있다.
+    """
+
+    chart_type: Annotated[
+        Literal["scatter", "line", "bar", "histogram", "box", "heatmap"],
+        "차트 유형: scatter | line | bar | histogram | box | heatmap",
+    ] = "scatter"
+    title: Annotated[str, "차트 제목"] = ""
+    series: Annotated[
+        list[dict[str, Any]] | None,
+        '시리즈 목록. 각 항목: {"name": str, "data": [[x,y], ...] 또는 [v, ...]}. '
+        "option 을 직접 전달할 경우 생략 가능.",
+    ] = None
+    x_label: Annotated[str, "X축 레이블"] = ""
+    y_label: Annotated[str, "Y축 레이블"] = ""
+    extra_option: Annotated[
+        dict[str, Any] | None,
+        "ECharts option 추가 필드 (기본 option 에 deep-merge). 선택 사항.",
+    ] = None
+    option: Annotated[
+        dict[str, Any] | None,
+        "완전한 ECharts option 을 직접 전달. 지정 시 series·chart_type·extra_option 등 무시.",
+    ] = None
+
+
 # ---------------------------------------------------------------------------
 # 경로 허용 목록 — path traversal 방지
 # ---------------------------------------------------------------------------
 
-_ALLOWED_PATH_PREFIXES: tuple[str, ...] = (
-    "build/web/assets/",
-    "build\\web\\assets\\",
-    "assets/",
-    "assets\\",
-    "workspace/",
-    "workspace\\",
-    "result/",
-    "result\\",
-)
+_DATA_URI_SIZE_WARN_BYTES = 4_000_000
 
 
 def _resolve_image_source(source: str) -> tuple[str, str | None]:
@@ -42,19 +84,19 @@ def _resolve_image_source(source: str) -> tuple[str, str | None]:
     """
     stripped = source.strip()
 
-    # 1) data URI — 그대로 통과
+    # data URI — 그대로 통과 (크기만 경고).
     if stripped.startswith("data:"):
-        if len(stripped) > 4_000_000:
+        if len(stripped) > _DATA_URI_SIZE_WARN_BYTES:
             logger.warning("display_image: data URI 크기가 4MB 초과 — 렌더링 지연 가능")
         return stripped, None
 
-    # 2) 절대 URL — 그대로 통과
+    # 절대 URL — 그대로 통과.
     if stripped.startswith(("http://", "https://")):
         return stripped, None
 
     normalized = stripped.replace("\\", "/")
 
-    # 3) 프로젝트 자산 경로 → /assets/<filename>
+    # 프로젝트 자산 경로 → /assets/<filename>
     for prefix in ("build/web/assets/", "assets/"):
         if normalized.startswith(prefix):
             rest = normalized[len(prefix) :]
@@ -62,14 +104,14 @@ def _resolve_image_source(source: str) -> tuple[str, str | None]:
                 return "", f"허용되지 않는 자산 경로: {source!r}"
             return f"/assets/{rest}", None
 
-    # 4) 워크스페이스 경로 → /workspace/<path>
+    # 워크스페이스 경로 → /workspace/<path>
     if normalized.startswith("workspace/"):
         rest = normalized[len("workspace/") :]
         if not rest or ".." in rest:
             return "", f"허용되지 않는 워크스페이스 경로: {source!r}"
         return f"/workspace/{rest}", None
 
-    # 5) 산출물 경로 → /result/<path>
+    # 산출물 경로 → /result/<path>
     if normalized.startswith("result/"):
         rest = normalized[len("result/") :]
         if not rest or ".." in rest:
@@ -80,6 +122,17 @@ def _resolve_image_source(source: str) -> tuple[str, str | None]:
         f"지원하지 않는 이미지 소스: {source!r}. "
         "data URI, http(s) URL, "
         "'build/web/assets/'·'assets/'·'workspace/'·'result/' 경로만 허용됩니다."
+    )
+
+
+def _resolve_image_item(item: ImageItem) -> tuple[dict[str, Any] | None, str | None]:
+    """ImageItem → 프론트엔드 payload dict 로 정규화."""
+    resolved, error = _resolve_image_source(item.source)
+    if error:
+        return None, error
+    return (
+        {"src": resolved, "alt": item.alt, "caption": item.caption},
+        None,
     )
 
 
@@ -107,7 +160,6 @@ _TOOLBOX_FEATURE: dict[str, Any] = {
 def _build_echarts_option(
     chart_type: str,
     series: list[dict[str, Any]],
-    title: str | None,
     x_label: str | None,
     y_label: str | None,
     extra_option: dict[str, Any] | None,
@@ -117,7 +169,6 @@ def _build_echarts_option(
     Args:
         chart_type: "scatter" | "line" | "bar" | "histogram" | "box" | "heatmap"
         series: 시리즈 리스트. 각 항목: {"name": str, "data": [...]}
-        title: 차트 제목
         x_label: X축 이름
         y_label: Y축 이름
         extra_option: 부분 ECharts option — 깊은 병합으로 base 에 덮어씀
@@ -136,9 +187,6 @@ def _build_echarts_option(
         option = _build_standard_option(
             echarts_type, series, legend_data, x_label, y_label
         )
-
-    if title:
-        option["title"] = {"text": title, "left": "center"}
 
     if extra_option:
         option = _deep_merge(option, extra_option)
@@ -263,129 +311,135 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
     return result
 
 
+def _resolve_chart_item(item: ChartItem) -> tuple[dict[str, Any] | None, str | None]:
+    """ChartItem → 프론트엔드 payload dict 로 정규화."""
+    if item.option is not None:
+        return (
+            {
+                "chart_type": item.chart_type,
+                "title": item.title,
+                "option": item.option,
+            },
+            None,
+        )
+
+    if not item.series:
+        return None, "series 또는 option 중 하나는 필수입니다."
+
+    echarts_option = _build_echarts_option(
+        chart_type=item.chart_type,
+        series=item.series,
+        x_label=item.x_label or None,
+        y_label=item.y_label or None,
+        extra_option=item.extra_option,
+    )
+    return (
+        {
+            "chart_type": item.chart_type,
+            "title": item.title,
+            "option": echarts_option,
+        },
+        None,
+    )
+
+
 # ---------------------------------------------------------------------------
 # 도구 등록
 # ---------------------------------------------------------------------------
 
-_TYPE_LABEL: dict[str, str] = {
-    "scatter": "산점도",
-    "line": "꺾은선",
-    "bar": "막대",
-    "histogram": "히스토그램",
-    "box": "박스플롯",
-    "heatmap": "히트맵",
-}
-
 
 @register_tool(
     description=(
-        "이미지를 채팅창 우측 아티팩트 패널에 표시한다. "
+        "이미지(들)를 채팅창 우측 아티팩트 패널에 표시한다. "
         "When to use: 디스크에 존재하는 이미지(스크린샷·차트 이미지·아이콘 등) 또는 "
-        "공개 URL 이미지를 사용자에게 보여줄 때. "
+        "공개 URL 이미지를 사용자에게 보여줄 때. 한 번의 호출로 여러 이미지를 함께 "
+        "전달하면 패널이 갤러리 형태(소셜미디어 피드 + lazy load) 로 렌더링한다. "
         "When NOT to use: 파일이 아직 디스크에 없을 때(저장 도구로 먼저 생성), "
         "또는 동적 데이터를 시각화할 때(그 경우 display_chart 사용). "
-        "source 는 프로젝트 자산 경로('build/web/assets/...' 또는 'assets/...'), "
-        "워크스페이스 경로('workspace/...'), "
-        "산출물 경로('result/<session>/...'), "
+        "각 item.source 는 프로젝트 자산 경로('build/web/assets/...' 또는 'assets/...'), "
+        "워크스페이스 경로('workspace/...'), 산출물 경로('result/<session>/...'), "
         "http(s) URL, 또는 data URI 형식을 지원한다."
     ),
-    slot_prompts={"source": "표시할 이미지의 경로 또는 URL을 알려주세요."},
+    slot_prompts={
+        "images": "표시할 이미지 항목 리스트를 알려주세요. "
+        '예: [{"source": "...", "alt": "...", "caption": "..."}]',
+    },
     timeout_seconds=5,
 )
 async def display_image(
-    source: Annotated[
-        str,
-        "이미지 경로(assets/... 또는 workspace/...), 절대 URL, 또는 data URI",
+    images: Annotated[
+        list[ImageItem],
+        '표시할 이미지 항목 리스트. 각 항목: {"source": 경로, "alt": 대체텍스트, "caption": 캡션}.',
     ],
-    alt: Annotated[str, "이미지 대체 텍스트 (접근성·AI 요약용)"] = "",
-    caption: Annotated[str, "이미지 아래 표시할 짧은 설명"] = "",
 ) -> ToolResult:
     """이미지를 아티팩트 패널에 표시한다."""
-    resolved, error = _resolve_image_source(source)
-    if error:
-        return ToolResult(content=f"[display_image 오류] {error}", is_error=True)
+    if not images:
+        return ToolResult(
+            content="[display_image 오류] images 가 비어 있습니다.",
+            is_error=True,
+        )
 
-    label = alt or caption or source
+    resolved_items: list[dict[str, Any]] = []
+    for idx, item in enumerate(images):
+        payload, error = _resolve_image_item(item)
+        if error:
+            return ToolResult(
+                content=f"[display_image 오류] images[{idx}] — {error}",
+                is_error=True,
+            )
+        resolved_items.append(payload)
+
     return ToolResult(
-        content=f"이미지 표시: {label}",
-        data={
-            "kind": "image",
-            "src": resolved,
-            "alt": alt,
-            "caption": caption,
-        },
+        content=f"{len(resolved_items)}장 이미지를 패널에 표시했습니다.",
+        data={"kind": "image", "items": resolved_items},
     )
 
 
 @register_tool(
     description=(
-        "분석 결과를 ECharts 인터랙티브 차트로 아티팩트 패널에 표시한다. "
+        "분석 결과를 ECharts 인터랙티브 차트(들)로 아티팩트 패널에 표시한다. "
         "When to use: 수치 데이터의 분포·추세·상관관계를 사용자에게 시각적으로 전달할 때. "
+        "한 번의 호출로 여러 차트를 함께 전달하면 패널이 반응형 그리드(최대 6개/페이지) + "
+        "페이지네이션으로 렌더링한다. "
         "데이터 성격에 맞춰 chart_type 을 골라라 — 상관관계는 scatter, 시계열은 line, "
         "범주 비교는 bar, 분포는 histogram/box, 2차원 밀도는 heatmap. "
         "When NOT to use: 데이터가 텍스트/표 형태일 때(그 경우 save_artifact + display_markdown), "
         "또는 시리즈가 비어 있을 때(에러 반환). "
-        "Expected chaining: 데이터를 보유하면 즉시 호출 가능 — 사전 save 불필요. "
-        "단 원본 데이터를 디스크에도 남기려면 save_artifact(kind='json') 를 함께 호출해도 좋다. "
-        "extra_option 으로 ECharts option 을 부분 확장하거나, "
+        "각 charts 항목에 extra_option 으로 ECharts option 을 부분 확장하거나, "
         "option 으로 완전한 ECharts option 을 직접 전달할 수 있다."
     ),
     slot_prompts={
-        "series": "차트에 표시할 데이터 시리즈를 알려주세요. "
-        '예: [{"name": "시리즈명", "data": [[x1,y1], [x2,y2]]}]',
+        "charts": "표시할 차트 항목 리스트를 알려주세요. "
+        '예: [{"chart_type": "bar", "title": "...", "series": [...]}]',
     },
     timeout_seconds=5,
 )
 async def display_chart(
-    series: Annotated[
-        list[dict[str, Any]] | None,
-        '시리즈 목록. 각 항목: {"name": str, "data": [[x,y], ...] 또는 [v, ...]}. '
-        "option 을 직접 전달할 경우 생략 가능.",
-    ] = None,
-    chart_type: Annotated[
-        Literal["scatter", "line", "bar", "histogram", "box", "heatmap"],
-        "차트 유형: scatter(산점도) | line(꺾은선) | bar(막대) | histogram(히스토그램) | box(박스플롯) | heatmap(히트맵)",
-    ] = "scatter",
-    title: Annotated[str, "차트 제목"] = "",
-    x_label: Annotated[str, "X축 레이블"] = "",
-    y_label: Annotated[str, "Y축 레이블"] = "",
-    extra_option: Annotated[
-        dict[str, Any] | None,
-        "ECharts option 추가 필드 (기본 option 에 deep-merge). 선택 사항.",
-    ] = None,
-    option: Annotated[
-        dict[str, Any] | None,
-        "완전한 ECharts option 을 직접 전달. 지정 시 series·chart_type·extra_option 등 무시.",
-    ] = None,
+    charts: Annotated[
+        list[ChartItem],
+        "표시할 차트 항목 리스트. 각 항목은 chart_type + series (또는 option) 를 포함한다.",
+    ],
 ) -> ToolResult:
     """ECharts 차트를 아티팩트 패널에 표시한다."""
-    if option is not None:
-        echarts_option = option
-    else:
-        if not series:
-            return ToolResult(
-                content="[display_chart 오류] series 또는 option 중 하나는 필수입니다.",
-                is_error=True,
-            )
-        echarts_option = _build_echarts_option(
-            chart_type=chart_type,
-            series=series,
-            title=title or None,
-            x_label=x_label or None,
-            y_label=y_label or None,
-            extra_option=extra_option,
+    if not charts:
+        return ToolResult(
+            content="[display_chart 오류] charts 가 비어 있습니다.",
+            is_error=True,
         )
 
-    type_label = _TYPE_LABEL.get(chart_type, chart_type)
-    series_count = len(series) if series is not None else "?"
+    items: list[dict[str, Any]] = []
+    for idx, item in enumerate(charts):
+        payload, error = _resolve_chart_item(item)
+        if error:
+            return ToolResult(
+                content=f"[display_chart 오류] charts[{idx}] — {error}",
+                is_error=True,
+            )
+        items.append(payload)
+
     return ToolResult(
-        content=f"{type_label} 차트 표시 — 시리즈 {series_count}개{f', {title}' if title else ''}",
-        data={
-            "kind": "chart",
-            "chart_type": chart_type,
-            "title": title,
-            "option": echarts_option,
-        },
+        content=f"{len(items)}개 차트를 아티팩트 패널에 표시했습니다.",
+        data={"kind": "chart", "items": items},
     )
 
 
