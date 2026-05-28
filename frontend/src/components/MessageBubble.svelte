@@ -231,7 +231,7 @@
   }
 
   .bubble.user {
-    max-width: 78%;
+    max-width: 100%;
     background: var(--user-bubble);
     color: var(--fg);
     padding: 10px 14px;

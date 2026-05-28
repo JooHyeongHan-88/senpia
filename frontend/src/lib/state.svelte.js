@@ -8,6 +8,7 @@ export const ui = $state({
   theme: "light",
   sidebarOpen: false,
   appName: "MyAgent",
+  appVersion: "",
 
   updateInfo: null,
   updateDismissed: false,

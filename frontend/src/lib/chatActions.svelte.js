@@ -626,8 +626,9 @@ export async function initApp() {
 
   // 앱 이름 동적 로드 — title 과 사이드바 brand text 동기화.
   getAppInfo()
-    .then(({ name }) => {
+    .then(({ name, version }) => {
       ui.appName = name;
+      ui.appVersion = version ?? "";
       document.title = name;
     })
     .catch(() => {});
