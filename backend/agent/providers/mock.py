@@ -44,13 +44,13 @@ _compose_sub_agent_system_prompt 가 항상 주입). 같은 analyst_agent 라도
 """
 
 import asyncio
+import json
 import logging
 import re
 import shutil
 import uuid
 from collections.abc import AsyncIterator
 from typing import Any
-from urllib.parse import quote
 
 from agent.models import (
     DeltaEvent,
@@ -433,9 +433,9 @@ async def _scenario_D_orchestrator(
 # --- D analyst sub-agent flow -------------------------------------------------
 
 _D_SUB_ADD_PREFIX = "mock-D-sub-add-"
-_D_SUB_EXEC_PREFIX = "mock-D-sub-exec-"
 _D_SUB_CALL_PREFIX = "mock-D-sub-call-"
-_D_SUB_EVAL_PREFIX = "mock-D-sub-eval-"
+_D_SUB_PARQUET_PREFIX = "mock-D-sub-parquet-"
+_D_SUB_SPEC_PREFIX = "mock-D-sub-spec-"
 _D_SUB_CHART_PREFIX = "mock-D-sub-chart-"
 _D_SUB_COMPLETE_PREFIX = "mock-D-sub-complete-"
 _D_SUB_FINISH_PREFIX = "mock-D-sub-finish-"
@@ -444,17 +444,20 @@ _D_SUB_FINISH_PREFIX = "mock-D-sub-finish-"
 async def _scenario_D_analyst_sub(
     messages: list[Message],
 ) -> AsyncIterator[StreamEvent]:
-    """analyst_agent sub-context (D 단일 위임).
+    """analyst_agent sub-context (D 단일 위임) — 신규 parquet + spec 파이프라인.
 
-    턴 1: ReasoningEvent + add_todo(3)
-    턴 2: exec_code (samples 정의) + complete_todo(1)
-    턴 3: call_function (통계 계산) + complete_todo(2)
-    턴 4: eval_expression (mean 추출) + display_chart + complete_todo(3)
+    턴 1: ReasoningEvent + add_todo(3) → [샘플+통계, 데이터 직렬화, spec+표시]
+    턴 2: exec_code(polars samples_df) + call_function(stats_df)
+          + eval_expression(mean 추출) + complete_todo(1)
+    턴 3: save_artifact(parquet, samples.parquet) + save_artifact(parquet, stats.parquet)
+          + complete_todo(2)
+    턴 4: save_artifact(json, charts.spec.json) + display_chart(spec 경로)
+          + complete_todo(3)
     턴 5: complete_subagent
     """
     has_add = _has_recent_tool_result(messages, _D_SUB_ADD_PREFIX)
-    has_exec = _has_recent_tool_result(messages, _D_SUB_EXEC_PREFIX)
     has_call = _has_recent_tool_result(messages, _D_SUB_CALL_PREFIX)
+    has_parquet = _has_recent_tool_result(messages, _D_SUB_PARQUET_PREFIX)
     has_chart = _has_recent_tool_result(messages, _D_SUB_CHART_PREFIX)
     task_ids = _extract_task_ids(messages, _D_SUB_ADD_PREFIX)
     completed = _count_completes(messages, _D_SUB_COMPLETE_PREFIX)
@@ -463,7 +466,7 @@ async def _scenario_D_analyst_sub(
     if not has_add:
         reasoning = (
             "데이터 요약 통계를 계산하기 위해 작업을 3단계로 분해합니다. "
-            "샘플 데이터 생성 → compute_summary_stats 호출 → 차트 시각화 순서로 진행합니다..."
+            "polars DataFrame 생성 + 통계 계산 → parquet 직렬화 → 차트 spec 작성·표시 순서입니다..."
         )
         for i in range(0, len(reasoning), 6):
             await asyncio.sleep(_MOCK_TOKEN_DELAY)
@@ -475,9 +478,13 @@ async def _scenario_D_analyst_sub(
                 name="add_todo",
                 arguments={
                     "items": [
-                        {"description": "샘플 데이터 30건 생성 (samples)"},
-                        {"description": "compute_summary_stats 호출 (stats)"},
-                        {"description": "차트 시각화 및 단일 지표 추출"},
+                        {
+                            "description": "samples_df (30행) 생성 + 요약 통계 stats_df 산출"
+                        },
+                        {
+                            "description": "samples.parquet · stats.parquet 디스크 직렬화"
+                        },
+                        {"description": "charts.spec.json 작성 후 display_chart 호출"},
                     ]
                 },
             )
@@ -485,19 +492,33 @@ async def _scenario_D_analyst_sub(
         yield DoneEvent()
         return
 
-    # 턴 2: exec_code → samples 정의 + complete_todo(1).
-    if not has_exec and task_ids:
+    # 턴 2: exec_code (samples_df) + call_function (stats_df) + eval_expression + complete_todo(1).
+    if not has_call and task_ids:
         yield ToolCallEvent(
             call=ToolCall(
-                id=f"{_D_SUB_EXEC_PREFIX}{uuid.uuid4().hex[:8]}",
+                id=f"mock-D-sub-exec-{uuid.uuid4().hex[:8]}",
                 name="exec_code",
+                arguments={"code": _build_samples_df_code(n=30, x_step=0.5, noise=0.4)},
+            )
+        )
+        yield ToolCallEvent(
+            call=ToolCall(
+                id=f"{_D_SUB_CALL_PREFIX}{uuid.uuid4().hex[:8]}",
+                name="call_function",
                 arguments={
-                    "code": (
-                        "# 가상 표본 — y ≈ 0.5x + 노이즈 패턴의 1차원 측정치\n"
-                        "samples = [round(i * 0.5 + ((i * 7) % 11 - 5) * 0.4, 3) "
-                        "for i in range(30)]\n"
-                        "print(f'samples 길이: {len(samples)}, 첫 3개: {samples[:3]}')"
-                    )
+                    "qualified_name": "scripts.stats_df.compute_summary_stats_df",
+                    "kwargs": {"data": "$value_list"},
+                    "store_as": "stats_df",
+                },
+            )
+        )
+        yield ToolCallEvent(
+            call=ToolCall(
+                id=f"mock-D-sub-eval-{uuid.uuid4().hex[:8]}",
+                name="eval_expression",
+                arguments={
+                    "expression": "stats_df.filter(pl.col('metric')=='mean')['value'][0]",
+                    "store_as": "avg",
                 },
             )
         )
@@ -507,23 +528,34 @@ async def _scenario_D_analyst_sub(
                 name="complete_todo",
                 arguments={
                     "task_id": task_ids[0],
-                    "summary": "samples 30건 생성 완료",
+                    "summary": "samples_df 30행 생성 + stats_df 6행 산출 + avg 별도 추출",
                 },
             )
         )
         yield DoneEvent()
         return
 
-    # 턴 3: call_function → compute_summary_stats + complete_todo(2).
-    if not has_call and len(task_ids) >= 2:
+    # 턴 3: save_artifact(parquet) x2 + complete_todo(2).
+    if not has_parquet and len(task_ids) >= 2:
         yield ToolCallEvent(
             call=ToolCall(
-                id=f"{_D_SUB_CALL_PREFIX}{uuid.uuid4().hex[:8]}",
-                name="call_function",
+                id=f"{_D_SUB_PARQUET_PREFIX}samples-{uuid.uuid4().hex[:8]}",
+                name="save_artifact",
                 arguments={
-                    "qualified_name": "scripts.stats.compute_summary_stats",
-                    "kwargs": {"data": "$samples"},
-                    "store_as": "stats",
+                    "filename": "samples.parquet",
+                    "kind": "parquet",
+                    "source": "$samples_df",
+                },
+            )
+        )
+        yield ToolCallEvent(
+            call=ToolCall(
+                id=f"{_D_SUB_PARQUET_PREFIX}stats-{uuid.uuid4().hex[:8]}",
+                name="save_artifact",
+                arguments={
+                    "filename": "stats.parquet",
+                    "kind": "parquet",
+                    "source": "$stats_df",
                 },
             )
         )
@@ -533,32 +565,34 @@ async def _scenario_D_analyst_sub(
                 name="complete_todo",
                 arguments={
                     "task_id": task_ids[1],
-                    "summary": "compute_summary_stats 호출 완료 — stats 변수 저장",
+                    "summary": "samples.parquet · stats.parquet 저장 완료",
                 },
             )
         )
         yield DoneEvent()
         return
 
-    # 턴 4: eval_expression + display_chart + complete_todo(3).
+    # 턴 4: save_artifact(spec.json) + display_chart + complete_todo(3).
     if not has_chart and len(task_ids) >= 3:
+        spec_path = (
+            f"result/{session_dir_name()}/{_current_turn_slot_name()}/charts.spec.json"
+        )
         yield ToolCallEvent(
             call=ToolCall(
-                id=f"{_D_SUB_EVAL_PREFIX}{uuid.uuid4().hex[:8]}",
-                name="eval_expression",
+                id=f"{_D_SUB_SPEC_PREFIX}{uuid.uuid4().hex[:8]}",
+                name="save_artifact",
                 arguments={
-                    "expression": "stats['mean']",
-                    "store_as": "avg",
+                    "filename": "charts.spec.json",
+                    "kind": "json",
+                    "content": json.dumps(_scenario_D_chart_spec(), ensure_ascii=False),
                 },
             )
         )
-        # Mock 은 실제 namespace 값을 알지 못하므로 데모용 더미 데이터로 4개 차트 구성.
-        # 한 번의 display_chart 호출에 list 로 전달해 패널의 반응형 그리드 렌더링을 검증.
         yield ToolCallEvent(
             call=ToolCall(
                 id=f"{_D_SUB_CHART_PREFIX}{uuid.uuid4().hex[:8]}",
                 name="display_chart",
-                arguments={"charts": _scenario_D_charts()},
+                arguments={"source": spec_path, "title": "통계량 요약 차트"},
             )
         )
         yield ToolCallEvent(
@@ -567,7 +601,7 @@ async def _scenario_D_analyst_sub(
                 name="complete_todo",
                 arguments={
                     "task_id": task_ids[2],
-                    "summary": "차트 시각화 및 평균 지표 추출 완료",
+                    "summary": "charts.spec.json + 렌더된 charts.json 생성 완료",
                 },
             )
         )
@@ -578,8 +612,9 @@ async def _scenario_D_analyst_sub(
     if completed >= 3:
         summary = (
             "Task Summary:\n"
-            "- samples 30건에 대해 compute_summary_stats 호출, 6개 지표 산출\n"
-            "- 평균 지표(avg)는 별도 추출, 막대 차트 시각화 완료"
+            "- samples_df 30행 polars DataFrame 생성 + compute_summary_stats_df 호출\n"
+            "- samples.parquet · stats.parquet 디스크 직렬화 (타입 보존)\n"
+            "- charts.spec.json (4 차트 spec) 작성 후 display_chart 로 렌더링"
         )
         yield ToolCallEvent(
             call=ToolCall(
@@ -764,8 +799,9 @@ async def _scenario_E_orchestrator(
 # --- E analyst sub-agent flow ------------------------------------------------
 
 _E_ANALYST_ADD_PREFIX = "mock-E-analyst-add-"
-_E_ANALYST_EXEC_PREFIX = "mock-E-analyst-exec-"
 _E_ANALYST_CALL_PREFIX = "mock-E-analyst-call-"
+_E_ANALYST_PARQUET_PREFIX = "mock-E-analyst-parquet-"
+_E_ANALYST_SPEC_PREFIX = "mock-E-analyst-spec-"
 _E_ANALYST_CHART_PREFIX = "mock-E-analyst-chart-"
 _E_ANALYST_COMPLETE_PREFIX = "mock-E-analyst-complete-"
 _E_ANALYST_FINISH_PREFIX = "mock-E-analyst-finish-"
@@ -774,14 +810,23 @@ _E_ANALYST_FINISH_PREFIX = "mock-E-analyst-finish-"
 async def _scenario_E_analyst_sub(
     messages: list[Message],
 ) -> AsyncIterator[StreamEvent]:
-    """E analyst sub — D 보다 축약 (add_todo(2) → exec+call → chart → finish)."""
+    """E analyst sub — 신규 parquet + spec 파이프라인 (5턴).
+
+    턴 1: add_todo(3)
+    턴 2: exec_code (samples_df + corr_df + grouped_df) + call_function (stats_df)
+          + complete_todo(1)
+    턴 3: save_artifact(parquet) × 4 (samples / stats / corr / grouped) + complete_todo(2)
+    턴 4: save_artifact(json, charts.spec.json) + display_chart + complete_todo(3)
+    턴 5: complete_subagent
+    """
     has_add = _has_recent_tool_result(messages, _E_ANALYST_ADD_PREFIX)
     has_call = _has_recent_tool_result(messages, _E_ANALYST_CALL_PREFIX)
+    has_parquet = _has_recent_tool_result(messages, _E_ANALYST_PARQUET_PREFIX)
     has_chart = _has_recent_tool_result(messages, _E_ANALYST_CHART_PREFIX)
     task_ids = _extract_task_ids(messages, _E_ANALYST_ADD_PREFIX)
     completed = _count_completes(messages, _E_ANALYST_COMPLETE_PREFIX)
 
-    # 턴 1: add_todo(2).
+    # 턴 1: add_todo(3).
     if not has_add:
         yield ToolCallEvent(
             call=ToolCall(
@@ -789,8 +834,15 @@ async def _scenario_E_analyst_sub(
                 name="add_todo",
                 arguments={
                     "items": [
-                        {"description": "샘플 데이터 생성 및 통계 계산"},
-                        {"description": "차트 시각화"},
+                        {
+                            "description": "samples_df + corr_df + grouped_df 생성 + 통계 계산"
+                        },
+                        {
+                            "description": "samples.parquet · stats.parquet · corr.parquet · grouped.parquet 직렬화"
+                        },
+                        {
+                            "description": "charts.spec.json 작성 후 display_chart 호출 (7 차트)"
+                        },
                     ]
                 },
             )
@@ -802,15 +854,9 @@ async def _scenario_E_analyst_sub(
     if not has_call and task_ids:
         yield ToolCallEvent(
             call=ToolCall(
-                id=f"{_E_ANALYST_EXEC_PREFIX}{uuid.uuid4().hex[:8]}",
+                id=f"mock-E-analyst-exec-{uuid.uuid4().hex[:8]}",
                 name="exec_code",
-                arguments={
-                    "code": (
-                        "samples = [round(i * 0.7 + ((i * 5) % 9 - 4) * 0.3, 3) "
-                        "for i in range(24)]\n"
-                        "print(f'준비 완료: 표본 {len(samples)}건')"
-                    )
-                },
+                arguments={"code": _build_E_dataframes_code(n=24)},
             )
         )
         yield ToolCallEvent(
@@ -818,9 +864,9 @@ async def _scenario_E_analyst_sub(
                 id=f"{_E_ANALYST_CALL_PREFIX}{uuid.uuid4().hex[:8]}",
                 name="call_function",
                 arguments={
-                    "qualified_name": "scripts.stats.compute_summary_stats",
-                    "kwargs": {"data": "$samples"},
-                    "store_as": "stats",
+                    "qualified_name": "scripts.stats_df.compute_summary_stats_df",
+                    "kwargs": {"data": "$value_list"},
+                    "store_as": "stats_df",
                 },
             )
         )
@@ -830,42 +876,88 @@ async def _scenario_E_analyst_sub(
                 name="complete_todo",
                 arguments={
                     "task_id": task_ids[0],
-                    "summary": "샘플 데이터 24건 + compute_summary_stats 호출 완료",
+                    "summary": "samples_df(24행) + corr_df(4행) + grouped_df(4행) 생성 + stats_df 산출",
                 },
             )
         )
         yield DoneEvent()
         return
 
-    # 턴 3: display_chart + complete_todo(2).
-    # E 시나리오는 차트 7개를 한 번에 전달 → 페이지네이션(1페이지 6 + 2페이지 1) 검증.
-    if not has_chart and len(task_ids) >= 2:
-        yield ToolCallEvent(
-            call=ToolCall(
-                id=f"{_E_ANALYST_CHART_PREFIX}{uuid.uuid4().hex[:8]}",
-                name="display_chart",
-                arguments={"charts": _scenario_E_charts()},
+    # 턴 3: 4개 parquet 직렬화 + complete_todo(2).
+    if not has_parquet and len(task_ids) >= 2:
+        for varname, filename in [
+            ("samples_df", "samples.parquet"),
+            ("stats_df", "stats.parquet"),
+            ("corr_df", "corr.parquet"),
+            ("grouped_df", "grouped.parquet"),
+        ]:
+            yield ToolCallEvent(
+                call=ToolCall(
+                    id=f"{_E_ANALYST_PARQUET_PREFIX}{varname}-{uuid.uuid4().hex[:8]}",
+                    name="save_artifact",
+                    arguments={
+                        "filename": filename,
+                        "kind": "parquet",
+                        "source": f"${varname}",
+                    },
+                )
             )
-        )
         yield ToolCallEvent(
             call=ToolCall(
                 id=f"{_E_ANALYST_COMPLETE_PREFIX}2-{task_ids[1]}",
                 name="complete_todo",
                 arguments={
                     "task_id": task_ids[1],
-                    "summary": "막대 차트 시각화 완료",
+                    "summary": "4개 parquet (samples · stats · corr · grouped) 저장 완료",
                 },
             )
         )
         yield DoneEvent()
         return
 
-    # 턴 4: complete_subagent.
-    if completed >= 2:
+    # 턴 4: save_artifact(spec) + display_chart + complete_todo(3).
+    if not has_chart and len(task_ids) >= 3:
+        spec_path = (
+            f"result/{session_dir_name()}/{_current_turn_slot_name()}/charts.spec.json"
+        )
+        yield ToolCallEvent(
+            call=ToolCall(
+                id=f"{_E_ANALYST_SPEC_PREFIX}{uuid.uuid4().hex[:8]}",
+                name="save_artifact",
+                arguments={
+                    "filename": "charts.spec.json",
+                    "kind": "json",
+                    "content": json.dumps(_scenario_E_chart_spec(), ensure_ascii=False),
+                },
+            )
+        )
+        yield ToolCallEvent(
+            call=ToolCall(
+                id=f"{_E_ANALYST_CHART_PREFIX}{uuid.uuid4().hex[:8]}",
+                name="display_chart",
+                arguments={"source": spec_path, "title": "종합 분석 차트 (7종)"},
+            )
+        )
+        yield ToolCallEvent(
+            call=ToolCall(
+                id=f"{_E_ANALYST_COMPLETE_PREFIX}3-{task_ids[2]}",
+                name="complete_todo",
+                arguments={
+                    "task_id": task_ids[2],
+                    "summary": "charts.spec.json (7 차트) + 렌더된 charts.json 생성 완료",
+                },
+            )
+        )
+        yield DoneEvent()
+        return
+
+    # 턴 5: complete_subagent.
+    if completed >= 3:
         summary = (
             "Task Summary:\n"
-            "- 표본 24건의 요약 통계 계산 (compute_summary_stats)\n"
-            "- 6개 지표 막대 차트 시각화 완료"
+            "- 24행 samples_df + 보조 DataFrame 3종 polars 생성\n"
+            "- 4개 parquet 디스크 직렬화 (타입 보존)\n"
+            "- 7 차트 spec 작성 후 렌더링 (페이지네이션 검증: 6+1)"
         )
         yield ToolCallEvent(
             call=ToolCall(
@@ -973,7 +1065,7 @@ async def _scenario_E_writer_sub(
             call=ToolCall(
                 id=f"{_E_WRITER_GALLERY_PREFIX}{uuid.uuid4().hex[:8]}",
                 name="display_image",
-                arguments={"images": _scenario_E_gallery_items()},
+                arguments={"images": _save_gallery_artifacts()},
             )
         )
         yield DoneEvent()
@@ -1079,6 +1171,17 @@ def _count_completes(messages: list[Message], complete_prefix: str) -> int:
     return count
 
 
+def _extract_artifact_path(messages: list[Message], save_prefix: str) -> str | None:
+    """save_artifact tool_result content 에서 'result/...' 경로를 파싱해 반환한다.
+
+    save_artifact 는 성공 시 '저장 완료: result/<session>/<ts>/<file>' 형식으로 응답한다.
+    """
+    content = _latest_tool_content(messages, save_prefix)
+    if content and content.startswith("저장 완료: "):
+        return content[len("저장 완료: ") :].split("\n")[0].strip()
+    return None
+
+
 def _compose_reply(last_user: Message | None) -> str:
     """A echo 폴백 응답."""
     if last_user is None:
@@ -1094,184 +1197,199 @@ def _compose_reply(last_user: Message | None) -> str:
 # =============================================================================
 
 
-def _scenario_D_charts() -> list[dict[str, Any]]:
-    """D 시나리오 — 4종 차트로 반응형 그리드 + 단일 페이지 렌더링 검증."""
-    return [
-        {
-            "chart_type": "bar",
-            "title": "요약 통계량 (samples)",
-            "x_label": "지표",
-            "y_label": "값",
-            "series": [
-                {
-                    "name": "stats",
-                    "data": [
-                        ["count", 30],
-                        ["mean", 7.5],
-                        ["median", 7.3],
-                        ["stdev", 4.6],
-                        ["min", -1.6],
-                        ["max", 16.1],
-                    ],
-                }
-            ],
-        },
-        {
-            "chart_type": "line",
-            "title": "samples 추세 (인덱스순)",
-            "x_label": "인덱스",
-            "y_label": "값",
-            "series": [
-                {
-                    "name": "samples",
-                    "data": [round(i * 0.5, 2) for i in range(30)],
-                }
-            ],
-        },
-        {
-            "chart_type": "scatter",
-            "title": "samples vs 이상치 점수",
-            "x_label": "값",
-            "y_label": "이상치 점수",
-            "series": [
-                {
-                    "name": "anomaly",
-                    "data": [[i * 0.5, ((i * 7) % 11 - 5) * 0.4] for i in range(30)],
-                }
-            ],
-        },
-        {
-            "chart_type": "box",
-            "title": "분포 박스플롯",
-            "x_label": "그룹",
-            "y_label": "값",
-            "series": [
-                {
-                    "name": "분포",
-                    "data": [[-1.6, 4.0, 7.3, 11.0, 16.1]],
-                }
-            ],
-            "extra_option": {"xAxis": {"data": ["samples"]}},
-        },
-    ]
+def _build_samples_df_code(n: int, x_step: float, noise: float) -> str:
+    """exec_code 에 전달할 polars DataFrame 생성 코드 문자열.
+
+    samples_df 컬럼: idx (Int64), value (Float64), anomaly_score (Float64).
+    value_list 도 namespace 에 함께 저장 — call_function 의 list[float] 인자로 사용.
+    """
+    return (
+        "import polars as pl\n"
+        f"_n, _step, _noise = {n}, {x_step}, {noise}\n"
+        "_values = [round(i * _step + ((i * 7) % 11 - 5) * _noise, 3) for i in range(_n)]\n"
+        "_anomaly = [round(((i * 7) % 11 - 5) * _noise / 4.0, 3) for i in range(_n)]\n"
+        "samples_df = pl.DataFrame({\n"
+        "    'idx': list(range(_n)),\n"
+        "    'value': _values,\n"
+        "    'anomaly_score': _anomaly,\n"
+        "})\n"
+        "value_list = samples_df['value'].to_list()\n"
+        "print(f'samples_df: shape={samples_df.shape}, value_list len={len(value_list)}')"
+    )
 
 
-def _scenario_E_charts() -> list[dict[str, Any]]:
-    """E analyst sub — 7개 차트로 페이지네이션(1페이지 6 + 2페이지 1) 검증."""
-    return [
-        {
-            "chart_type": "bar",
-            "title": "요약 통계량 (composite)",
-            "x_label": "지표",
-            "y_label": "값",
-            "series": [
-                {
-                    "name": "stats",
-                    "data": [
-                        ["count", 24],
-                        ["mean", 8.1],
-                        ["median", 7.9],
-                        ["stdev", 5.2],
-                        ["min", -1.2],
-                        ["max", 17.4],
-                    ],
-                }
-            ],
-        },
-        {
-            "chart_type": "line",
-            "title": "samples 시계열",
-            "x_label": "인덱스",
-            "y_label": "값",
-            "series": [
-                {
-                    "name": "samples",
-                    "data": [round(i * 0.7, 2) for i in range(24)],
-                }
-            ],
-        },
-        {
-            "chart_type": "scatter",
-            "title": "samples 산점도",
-            "x_label": "x",
-            "y_label": "y",
-            "series": [
-                {
-                    "name": "관측",
-                    "data": [[i * 0.7, ((i * 5) % 9 - 4) * 0.3] for i in range(24)],
-                }
-            ],
-        },
-        {
-            "chart_type": "box",
-            "title": "그룹별 분포 박스플롯",
-            "x_label": "그룹",
-            "y_label": "값",
-            "series": [
-                {
-                    "name": "분포",
-                    "data": [
-                        [-1.2, 4.5, 7.9, 11.8, 17.4],
-                        [0.2, 5.0, 8.3, 11.5, 16.0],
-                    ],
-                }
-            ],
-            "extra_option": {"xAxis": {"data": ["A", "B"]}},
-        },
-        {
-            "chart_type": "histogram",
-            "title": "값 분포 히스토그램",
-            "x_label": "구간",
-            "y_label": "빈도",
-            "series": [
-                {
-                    "name": "빈도",
-                    "data": [
-                        ["~0", 2],
-                        ["0~5", 6],
-                        ["5~10", 9],
-                        ["10~15", 5],
-                        ["15+", 2],
-                    ],
-                }
-            ],
-        },
-        {
-            "chart_type": "heatmap",
-            "title": "상관 히트맵",
-            "x_label": "지표 X",
-            "y_label": "지표 Y",
-            "series": [
-                {
-                    "name": "corr",
-                    "data": [
-                        [0, 0, 1.0],
-                        [0, 1, 0.3],
-                        [1, 0, 0.3],
-                        [1, 1, 1.0],
-                    ],
-                }
-            ],
-            "extra_option": {
-                "xAxis": {"data": ["mean", "stdev"]},
-                "yAxis": {"data": ["mean", "stdev"]},
+def _build_E_dataframes_code(n: int) -> str:
+    """E 시나리오용 — samples_df + corr_df + grouped_df 를 한 번에 생성.
+
+    corr_df: 2x2 상관계수 heatmap 용 (row, col, value)
+    grouped_df: 그룹별 분기 평균 (group, quarter, value)
+    """
+    return (
+        "import polars as pl\n"
+        f"_n = {n}\n"
+        "_values = [round(i * 0.7 + ((i * 5) % 9 - 4) * 0.3, 3) for i in range(_n)]\n"
+        "_anomaly = [round(((i * 5) % 9 - 4) * 0.3 / 4.0, 3) for i in range(_n)]\n"
+        "samples_df = pl.DataFrame({\n"
+        "    'idx': list(range(_n)),\n"
+        "    'value': _values,\n"
+        "    'anomaly_score': _anomaly,\n"
+        "})\n"
+        "value_list = samples_df['value'].to_list()\n"
+        "corr_df = pl.DataFrame({\n"
+        "    'row': ['mean', 'mean', 'stdev', 'stdev'],\n"
+        "    'col': ['mean', 'stdev', 'mean', 'stdev'],\n"
+        "    'value': [1.0, 0.32, 0.32, 1.0],\n"
+        "})\n"
+        "grouped_df = pl.DataFrame({\n"
+        "    'group': ['A', 'A', 'B', 'B'],\n"
+        "    'quarter': ['Q1', 'Q2', 'Q1', 'Q2'],\n"
+        "    'value': [7.5, 8.2, 6.9, 7.8],\n"
+        "})\n"
+        "print(f'samples_df {samples_df.shape}, corr_df {corr_df.shape}, grouped_df {grouped_df.shape}')"
+    )
+
+
+def _scenario_D_chart_spec() -> dict[str, Any]:
+    """D 시나리오 — 4 차트 ChartSpecV1 (bar/line/scatter/box).
+
+    samples.parquet (idx, value, anomaly_score) + stats.parquet (metric, value) 참조.
+    """
+    return {
+        "version": "1",
+        "charts": [
+            {
+                "mark": "bar",
+                "title": "요약 통계량 (stats_df)",
+                "data": {"source": "stats.parquet"},
+                "encoding": {
+                    "x": {"field": "metric", "type": "nominal", "title": "지표"},
+                    "y": {"field": "value", "type": "quantitative", "title": "값"},
+                },
             },
-        },
-        {
-            "chart_type": "bar",
-            "title": "그룹별 평균 비교",
-            "x_label": "그룹",
-            "y_label": "평균",
-            "series": [
-                {"name": "그룹A", "data": [["분기1", 7.5], ["분기2", 8.2]]},
-                {"name": "그룹B", "data": [["분기1", 6.9], ["분기2", 7.8]]},
-            ],
-        },
-    ]
+            {
+                "mark": "line",
+                "title": "samples 추세",
+                "data": {"source": "samples.parquet"},
+                "encoding": {
+                    "x": {"field": "idx", "type": "quantitative", "title": "인덱스"},
+                    "y": {"field": "value", "type": "quantitative", "title": "값"},
+                },
+            },
+            {
+                "mark": "scatter",
+                "title": "samples vs 이상치 점수",
+                "data": {"source": "samples.parquet"},
+                "encoding": {
+                    "x": {"field": "value", "type": "quantitative", "title": "값"},
+                    "y": {
+                        "field": "anomaly_score",
+                        "type": "quantitative",
+                        "title": "이상치 점수",
+                    },
+                },
+            },
+            {
+                "mark": "box",
+                "title": "값 분포 박스플롯",
+                "data": {"source": "samples.parquet"},
+                "encoding": {
+                    "y": {"field": "value", "type": "quantitative", "title": "값"},
+                },
+            },
+        ],
+    }
 
 
-def _scenario_E_gallery_items() -> list[dict[str, Any]]:
-    """E writer sub — 색상 카드 10장 SVG data URI 갤러리 검증용 데이터."""
+def _scenario_E_chart_spec() -> dict[str, Any]:
+    """E 시나리오 — 7 차트 ChartSpecV1. 페이지네이션(6+1) 검증."""
+    return {
+        "version": "1",
+        "charts": [
+            {
+                "mark": "bar",
+                "title": "요약 통계량 (composite)",
+                "data": {"source": "stats.parquet"},
+                "encoding": {
+                    "x": {"field": "metric", "type": "nominal", "title": "지표"},
+                    "y": {"field": "value", "type": "quantitative", "title": "값"},
+                },
+            },
+            {
+                "mark": "line",
+                "title": "samples 시계열",
+                "data": {"source": "samples.parquet"},
+                "encoding": {
+                    "x": {"field": "idx", "type": "quantitative", "title": "인덱스"},
+                    "y": {"field": "value", "type": "quantitative", "title": "값"},
+                },
+            },
+            {
+                "mark": "scatter",
+                "title": "samples 산점도",
+                "data": {"source": "samples.parquet"},
+                "encoding": {
+                    "x": {"field": "value", "type": "quantitative", "title": "값"},
+                    "y": {
+                        "field": "anomaly_score",
+                        "type": "quantitative",
+                        "title": "이상치",
+                    },
+                },
+            },
+            {
+                "mark": "box",
+                "title": "값 분포 박스플롯",
+                "data": {"source": "samples.parquet"},
+                "encoding": {
+                    "y": {"field": "value", "type": "quantitative", "title": "값"},
+                },
+            },
+            {
+                "mark": "histogram",
+                "title": "값 분포 히스토그램",
+                "data": {"source": "samples.parquet"},
+                "encoding": {
+                    "x": {
+                        "field": "value",
+                        "type": "quantitative",
+                        "bin": True,
+                        "title": "구간",
+                    },
+                },
+            },
+            {
+                "mark": "heatmap",
+                "title": "상관 히트맵 (mean × stdev)",
+                "data": {"source": "corr.parquet"},
+                "encoding": {
+                    "x": {"field": "col", "type": "nominal", "title": "지표 X"},
+                    "y": {"field": "row", "type": "nominal", "title": "지표 Y"},
+                    "color": {
+                        "field": "value",
+                        "type": "quantitative",
+                        "title": "상관계수",
+                    },
+                },
+            },
+            {
+                "mark": "bar",
+                "title": "그룹별 분기 평균 비교",
+                "data": {"source": "grouped.parquet"},
+                "encoding": {
+                    "x": {"field": "quarter", "type": "nominal", "title": "분기"},
+                    "y": {"field": "value", "type": "quantitative", "title": "평균"},
+                    "color": {"field": "group", "type": "nominal", "title": "그룹"},
+                },
+            },
+        ],
+    }
+
+
+def _save_gallery_artifacts() -> list[dict[str, Any]]:
+    """색상 카드 10장 SVG 를 result 슬롯에 저장하고 display_image source 경로 목록을 반환한다.
+
+    시나리오 C 의 _ensure_favicon_artifact() 와 동일한 디스크 저장 패턴을 따른다.
+    """
     palette = [
         ("#FF6B6B", "01"),
         ("#FFA94D", "02"),
@@ -1284,23 +1402,24 @@ def _scenario_E_gallery_items() -> list[dict[str, Any]]:
         ("#FFC078", "09"),
         ("#74C0FC", "10"),
     ]
-    return [
-        {
-            "source": _color_card_data_uri(color, label),
-            "alt": f"색상 카드 {label}",
-            "caption": f"갤러리 카드 #{label} — {color}",
-        }
-        for color, label in palette
-    ]
-
-
-def _color_card_data_uri(color: str, label: str) -> str:
-    """단색 카드 SVG data URI 를 생성한다. (mock 갤러리 검증용)"""
-    svg = (
-        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200">'
-        f'<rect width="320" height="200" fill="{color}"/>'
-        '<text x="160" y="115" font-family="sans-serif" font-size="56" '
-        f'fill="white" text-anchor="middle" font-weight="700">{label}</text>'
-        "</svg>"
-    )
-    return f"data:image/svg+xml,{quote(svg)}"
+    slot = artifact_slot()
+    items: list[dict[str, Any]] = []
+    for color, label in palette:
+        filename = f"color-card-{label}.svg"
+        svg = (
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200">'
+            f'<rect width="320" height="200" fill="{color}"/>'
+            '<text x="160" y="115" font-family="sans-serif" font-size="56" '
+            f'fill="white" text-anchor="middle" font-weight="700">{label}</text>'
+            "</svg>"
+        )
+        (slot / filename).write_text(svg, encoding="utf-8")
+        src = f"result/{session_dir_name()}/{slot.name}/{filename}"
+        items.append(
+            {
+                "source": src,
+                "alt": f"색상 카드 {label}",
+                "caption": f"갤러리 카드 #{label} — {color}",
+            }
+        )
+    return items

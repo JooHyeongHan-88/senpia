@@ -6,19 +6,61 @@
 
   let { payload } = $props();
 
-  let items = $derived(Array.isArray(payload?.items) ? payload.items : []);
+  /** @type {"loading"|"ok"|"error"} */
+  let status = $state("loading");
+  let items = $state([]);
+  let errorMessage = $state("");
+
+  // payload.src が変わるたびに (タブ切り替えなど) ファイルを再フェッチ。
+  // 旧形式 (payload.items) もフォールバックとして対応。
+  $effect(() => {
+    const src = payload?.src;
+    const inlineItems = payload?.items;
+
+    if (Array.isArray(inlineItems) && inlineItems.length > 0) {
+      items = inlineItems;
+      status = "ok";
+      return;
+    }
+
+    if (!src) {
+      status = "error";
+      errorMessage = "차트 파일 경로가 없습니다.";
+      items = [];
+      return;
+    }
+
+    status = "loading";
+    items = [];
+    errorMessage = "";
+
+    fetch(src, { cache: "no-cache" })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data) => {
+        items = Array.isArray(data) ? data : [];
+        status = "ok";
+      })
+      .catch((err) => {
+        errorMessage = String(err?.message ?? err);
+        status = "error";
+      });
+  });
+
   let total = $derived(items.length);
   let totalPages = $derived(Math.max(1, Math.ceil(total / PAGE_SIZE)));
 
   let page = $state(1);
 
-  // items 가 바뀌면(다른 칩) 1페이지로 리셋.
+  // payload가 바뀌면(다른 칩) 1페이지로 리셋.
   $effect(() => {
     payload;
     page = 1;
   });
 
-  // 페이지 변경 시 범위 클램프 — 외부 변화에 안전망.
+  // 페이지 변경 시 범위 클램프.
   $effect(() => {
     if (page > totalPages) page = totalPages;
     if (page < 1) page = 1;
@@ -42,66 +84,73 @@
 </script>
 
 <div class="artifact-chart-wrap">
-  <div class="toolbar">
-    <span class="chart-label">
-      {#if total === 1}
-        {items[0]?.title || "차트"}
-      {:else}
-        차트 그리드
-      {/if}
-    </span>
-    {#if total > 1}
-      <div class="pager" role="group" aria-label="페이지 네비게이션">
-        <button
-          type="button"
-          class="page-btn"
-          onclick={goPrev}
-          disabled={page <= 1}
-          aria-label="이전 페이지"
-        >
-          ‹
-        </button>
-        <span class="page-counter">페이지 {page} / {totalPages}</span>
-        <button
-          type="button"
-          class="page-btn"
-          onclick={goNext}
-          disabled={page >= totalPages}
-          aria-label="다음 페이지"
-        >
-          ›
-        </button>
-      </div>
-    {/if}
-  </div>
-
-  {#if total === 0}
-    <div class="empty">표시할 차트가 없습니다.</div>
-  {:else if total === 1}
-    <!-- 단일 차트: 전체 영역 사용 + 클릭 가능 -->
-    <div class="single-area">
-      {#key items[0]}
-        <ChartCell
-          item={items[0]}
-          embedded={false}
-          onclick={() => openCellInLightbox(0)}
-        />
-      {/key}
+  {#if status === "loading"}
+    <div class="loading">차트를 불러오는 중...</div>
+  {:else if status === "error"}
+    <div class="artifact-error">
+      <strong>차트 파일을 불러올 수 없습니다.</strong>
+      <span class="reason">{errorMessage}</span>
     </div>
   {:else}
-    <!-- 다중 차트: 반응형 그리드. {#key} 로 페이지 전환 시 강제 remount → 인스턴스 dispose 보장 -->
-    {#key page}
-      <div class="grid">
-        {#each visibleItems as item, idx (idx)}
-          {@const globalIndex = (page - 1) * PAGE_SIZE + idx}
+    <div class="toolbar">
+      <span class="chart-label">
+        {#if total === 1}
+          {items[0]?.title || "차트"}
+        {:else}
+          차트 그리드
+        {/if}
+      </span>
+      {#if total > 1}
+        <div class="pager" role="group" aria-label="페이지 네비게이션">
+          <button
+            type="button"
+            class="page-btn"
+            onclick={goPrev}
+            disabled={page <= 1}
+            aria-label="이전 페이지"
+          >
+            ‹
+          </button>
+          <span class="page-counter">페이지 {page} / {totalPages}</span>
+          <button
+            type="button"
+            class="page-btn"
+            onclick={goNext}
+            disabled={page >= totalPages}
+            aria-label="다음 페이지"
+          >
+            ›
+          </button>
+        </div>
+      {/if}
+    </div>
+
+    {#if total === 0}
+      <div class="empty">표시할 차트가 없습니다.</div>
+    {:else if total === 1}
+      <div class="single-area">
+        {#key items[0]}
           <ChartCell
-            {item}
-            embedded={true}
-            onclick={() => openCellInLightbox(globalIndex)}
+            item={items[0]}
+            embedded={false}
+            onclick={() => openCellInLightbox(0)}
           />
-        {/each}
+        {/key}
       </div>
-    {/key}
+    {:else}
+      {#key page}
+        <div class="grid">
+          {#each visibleItems as item, idx (idx)}
+            {@const globalIndex = (page - 1) * PAGE_SIZE + idx}
+            <ChartCell
+              {item}
+              embedded={true}
+              onclick={() => openCellInLightbox(globalIndex)}
+            />
+          {/each}
+        </div>
+      {/key}
+    {/if}
   {/if}
 </div>
 
@@ -111,6 +160,36 @@
     flex-direction: column;
     height: 100%;
     min-height: 0;
+  }
+
+  .loading {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--fg-muted);
+    font-size: 13px;
+  }
+
+  .artifact-error {
+    margin: 24px auto;
+    max-width: 360px;
+    padding: 14px 16px;
+    border: 1px dashed var(--danger, #d33);
+    border-radius: var(--radius-md);
+    color: var(--danger, #d33);
+    background: color-mix(in srgb, var(--danger, #d33) 7%, transparent);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 13px;
+    text-align: center;
+  }
+
+  .artifact-error .reason {
+    font-size: 11px;
+    opacity: 0.8;
+    font-family: var(--font-mono, monospace);
   }
 
   .toolbar {

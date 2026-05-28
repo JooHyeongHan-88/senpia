@@ -1,28 +1,37 @@
-"""시각화 도구 — 채팅창 우측 아티팩트 패널에 이미지·차트를 표시한다.
+"""시각화 도구 — 채팅창 우측 아티팩트 패널에 이미지·차트·마크다운을 표시한다.
 
 LLM 이 이 도구를 호출하면 harness 가 ToolResultEvent.data 를 그대로 프론트엔드에
 전달하고, 프론트엔드는 data.kind 로 분기해 ArtifactPanel 에 렌더링한다.
 
-display_image / display_chart 는 한 번의 호출로 여러 항목을 list 로 전달받는다.
-프론트엔드는 items[] 를 페이지네이션·lazy load 로 렌더링한다.
+display_chart 는 ``charts.spec.json`` (ChartSpecV1) 을 읽어 같은 폴더의 parquet
+데이터를 로드해 ECharts option 리스트를 생성한 뒤 ``charts.json`` 로 저장한다.
+프론트엔드는 ``charts.json`` 만 fetch 하므로 spec 원본은 향후 인터랙티브 재처리를
+위해 보존된다.
+
+display_image 는 한 번의 호출로 여러 이미지를 list 로 전달받는다.
+display_markdown 은 사전 저장된 .md 파일 한 개를 표시한다.
 """
 
 from __future__ import annotations
 
-import copy
+import json
 import logging
-from typing import Annotated, Any, Literal
+from pathlib import Path
+from typing import Annotated, Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from agent.models import ToolResult
 from agent.registries.tools import register_tool
+from agent.runtime.chart_renderer import render_spec_to_echarts
+from agent.runtime.chart_spec import ChartSpecV1
+from core.config import RESULT_DIR
 
 logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Pydantic 입력 항목 모델 — list 인자로 받는 단일 객체 형태
+# Pydantic 입력 항목 모델
 # ---------------------------------------------------------------------------
 
 
@@ -35,35 +44,6 @@ class ImageItem(BaseModel):
     ]
     alt: Annotated[str, "이미지 대체 텍스트 (접근성·AI 요약용)"] = ""
     caption: Annotated[str, "이미지 아래 표시할 짧은 설명"] = ""
-
-
-class ChartItem(BaseModel):
-    """display_chart 의 단일 차트 항목.
-
-    series + chart_type 로 ECharts option 을 자동 생성하거나,
-    option 으로 완전한 ECharts option 을 직접 전달할 수 있다.
-    """
-
-    chart_type: Annotated[
-        Literal["scatter", "line", "bar", "histogram", "box", "heatmap"],
-        "차트 유형: scatter | line | bar | histogram | box | heatmap",
-    ] = "scatter"
-    title: Annotated[str, "차트 제목"] = ""
-    series: Annotated[
-        list[dict[str, Any]] | None,
-        '시리즈 목록. 각 항목: {"name": str, "data": [[x,y], ...] 또는 [v, ...]}. '
-        "option 을 직접 전달할 경우 생략 가능.",
-    ] = None
-    x_label: Annotated[str, "X축 레이블"] = ""
-    y_label: Annotated[str, "Y축 레이블"] = ""
-    extra_option: Annotated[
-        dict[str, Any] | None,
-        "ECharts option 추가 필드 (기본 option 에 deep-merge). 선택 사항.",
-    ] = None
-    option: Annotated[
-        dict[str, Any] | None,
-        "완전한 ECharts option 을 직접 전달. 지정 시 series·chart_type·extra_option 등 무시.",
-    ] = None
 
 
 # ---------------------------------------------------------------------------
@@ -137,213 +117,6 @@ def _resolve_image_item(item: ImageItem) -> tuple[dict[str, Any] | None, str | N
 
 
 # ---------------------------------------------------------------------------
-# ECharts option 빌더
-# ---------------------------------------------------------------------------
-
-_CHART_TYPE_MAP: dict[str, str] = {
-    "scatter": "scatter",
-    "line": "line",
-    "bar": "bar",
-    "histogram": "bar",  # ECharts 에 전용 histogram 타입 없음 — bar 로 구현
-    "box": "boxplot",
-    "heatmap": "heatmap",
-}
-
-_TOOLBOX_FEATURE: dict[str, Any] = {
-    "brush": {"type": ["rect", "polygon", "clear"]},
-    "dataZoom": {},
-    "restore": {},
-    "saveAsImage": {},
-}
-
-
-def _build_echarts_option(
-    chart_type: str,
-    series: list[dict[str, Any]],
-    x_label: str | None,
-    y_label: str | None,
-    extra_option: dict[str, Any] | None,
-) -> dict[str, Any]:
-    """간소화 스키마를 ECharts option JSON 으로 변환한다.
-
-    Args:
-        chart_type: "scatter" | "line" | "bar" | "histogram" | "box" | "heatmap"
-        series: 시리즈 리스트. 각 항목: {"name": str, "data": [...]}
-        x_label: X축 이름
-        y_label: Y축 이름
-        extra_option: 부분 ECharts option — 깊은 병합으로 base 에 덮어씀
-
-    Returns:
-        ECharts option 딕셔너리
-    """
-    echarts_type = _CHART_TYPE_MAP.get(chart_type, "scatter")
-    legend_data = [s.get("name", f"시리즈{i}") for i, s in enumerate(series)]
-
-    if echarts_type == "boxplot":
-        option = _build_boxplot_option(series, legend_data, x_label, y_label)
-    elif echarts_type == "heatmap":
-        option = _build_heatmap_option(series, legend_data, x_label, y_label)
-    else:
-        option = _build_standard_option(
-            echarts_type, series, legend_data, x_label, y_label
-        )
-
-    if extra_option:
-        option = _deep_merge(option, extra_option)
-
-    return option
-
-
-def _build_standard_option(
-    echarts_type: str,
-    series: list[dict[str, Any]],
-    legend_data: list[str],
-    x_label: str | None,
-    y_label: str | None,
-) -> dict[str, Any]:
-    """scatter / line / bar(histogram 포함) 공용 기본 option 을 생성한다."""
-    option: dict[str, Any] = {
-        "tooltip": {"trigger": "axis"},
-        "legend": {"data": legend_data},
-        "toolbox": {"feature": _TOOLBOX_FEATURE},
-        "brush": {},
-        "dataZoom": [{"type": "inside"}, {"type": "slider"}],
-        "xAxis": {"type": "value", "name": x_label or ""},
-        "yAxis": {"type": "value", "name": y_label or ""},
-        "series": [
-            {
-                "name": s.get("name", f"시리즈{i}"),
-                "type": echarts_type,
-                "data": s.get("data", []),
-                **({"symbolSize": 8} if echarts_type == "scatter" else {}),
-            }
-            for i, s in enumerate(series)
-        ],
-    }
-
-    # bar 차트(histogram 포함)는 xAxis category 타입이 자연스러움
-    if echarts_type == "bar":
-        option["xAxis"]["type"] = "category"
-
-    return option
-
-
-def _build_boxplot_option(
-    series: list[dict[str, Any]],
-    legend_data: list[str],
-    x_label: str | None,
-    y_label: str | None,
-) -> dict[str, Any]:
-    """boxplot 전용 option 을 생성한다.
-
-    Args:
-        series: 각 항목의 data 형식: [[min, Q1, median, Q3, max], ...]
-                xAxis category 레이블은 extra_option 으로 덮어쓴다.
-    """
-    return {
-        "tooltip": {"trigger": "item"},
-        "legend": {"data": legend_data},
-        "toolbox": {"feature": _TOOLBOX_FEATURE},
-        "xAxis": {"type": "category", "name": x_label or ""},
-        "yAxis": {"type": "value", "name": y_label or ""},
-        "series": [
-            {
-                "name": s.get("name", f"시리즈{i}"),
-                "type": "boxplot",
-                "data": s.get("data", []),
-            }
-            for i, s in enumerate(series)
-        ],
-    }
-
-
-def _build_heatmap_option(
-    series: list[dict[str, Any]],
-    legend_data: list[str],
-    x_label: str | None,
-    y_label: str | None,
-) -> dict[str, Any]:
-    """heatmap 전용 option 을 생성한다.
-
-    Args:
-        series: 각 항목의 data 형식: [[x_idx, y_idx, value], ...]
-                xAxis / yAxis category 레이블은 extra_option 으로 덮어쓴다.
-    """
-    all_values: list[float] = [
-        point[2]
-        for s in series
-        for point in s.get("data", [])
-        if isinstance(point, (list, tuple)) and len(point) >= 3
-    ]
-    return {
-        "tooltip": {"trigger": "item"},
-        "legend": {"data": legend_data},
-        "toolbox": {"feature": _TOOLBOX_FEATURE},
-        "xAxis": {"type": "category", "name": x_label or ""},
-        "yAxis": {"type": "category", "name": y_label or ""},
-        "visualMap": {
-            "min": min(all_values, default=0),
-            "max": max(all_values, default=1),
-            "calculable": True,
-            "orient": "horizontal",
-            "left": "center",
-            "bottom": "15%",
-        },
-        "series": [
-            {
-                "name": s.get("name", f"시리즈{i}"),
-                "type": "heatmap",
-                "data": s.get("data", []),
-            }
-            for i, s in enumerate(series)
-        ],
-    }
-
-
-def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
-    """override 를 base 에 재귀 병합한다. list 는 override 가 교체."""
-    result = copy.deepcopy(base)
-    for key, value in override.items():
-        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-            result[key] = _deep_merge(result[key], value)
-        else:
-            result[key] = copy.deepcopy(value)
-    return result
-
-
-def _resolve_chart_item(item: ChartItem) -> tuple[dict[str, Any] | None, str | None]:
-    """ChartItem → 프론트엔드 payload dict 로 정규화."""
-    if item.option is not None:
-        return (
-            {
-                "chart_type": item.chart_type,
-                "title": item.title,
-                "option": item.option,
-            },
-            None,
-        )
-
-    if not item.series:
-        return None, "series 또는 option 중 하나는 필수입니다."
-
-    echarts_option = _build_echarts_option(
-        chart_type=item.chart_type,
-        series=item.series,
-        x_label=item.x_label or None,
-        y_label=item.y_label or None,
-        extra_option=item.extra_option,
-    )
-    return (
-        {
-            "chart_type": item.chart_type,
-            "title": item.title,
-            "option": echarts_option,
-        },
-        None,
-    )
-
-
-# ---------------------------------------------------------------------------
 # 도구 등록
 # ---------------------------------------------------------------------------
 
@@ -397,49 +170,120 @@ async def display_image(
 
 @register_tool(
     description=(
-        "분석 결과를 ECharts 인터랙티브 차트(들)로 아티팩트 패널에 표시한다. "
-        "When to use: 수치 데이터의 분포·추세·상관관계를 사용자에게 시각적으로 전달할 때. "
-        "한 번의 호출로 여러 차트를 함께 전달하면 패널이 반응형 그리드(최대 6개/페이지) + "
-        "페이지네이션으로 렌더링한다. "
-        "데이터 성격에 맞춰 chart_type 을 골라라 — 상관관계는 scatter, 시계열은 line, "
-        "범주 비교는 bar, 분포는 histogram/box, 2차원 밀도는 heatmap. "
-        "When NOT to use: 데이터가 텍스트/표 형태일 때(그 경우 save_artifact + display_markdown), "
-        "또는 시리즈가 비어 있을 때(에러 반환). "
-        "각 charts 항목에 extra_option 으로 ECharts option 을 부분 확장하거나, "
-        "option 으로 완전한 ECharts option 을 직접 전달할 수 있다."
+        "save_artifact 로 저장한 ChartSpecV1 JSON 파일을 읽어 같은 폴더의 parquet 데이터를 "
+        "로드해 ECharts 인터랙티브 차트(들)를 아티팩트 패널에 표시한다. "
+        "Expected chaining: "
+        "(1) save_artifact(kind='parquet', filename='data.parquet', source='$df'), "
+        "(2) save_artifact(kind='json', filename='charts.spec.json', content=<ChartSpecV1>), "
+        "(3) display_chart(source='result/.../charts.spec.json'). "
+        "ChartSpecV1 스키마: "
+        "{version:'1', charts:[{mark, title, data:{source:'<parquet 파일명>'}, "
+        "encoding:{x:{field,type},y:{field,type},color?:{field,type}}, extra_option?}]}. "
+        "mark: bar | line | scatter | box | histogram | heatmap. "
+        "encoding.type: quantitative (수치축) | nominal (범주축) | temporal (시간축). "
+        "data.source 는 같은 폴더의 parquet 파일명 (상대). "
+        "When NOT to use: 데이터가 텍스트/표 형태일 때(그 경우 save_artifact + display_markdown)."
     ),
     slot_prompts={
-        "charts": "표시할 차트 항목 리스트를 알려주세요. "
-        '예: [{"chart_type": "bar", "title": "...", "series": [...]}]',
+        "source": "표시할 차트 spec 파일 경로를 알려주세요 (예: result/<session>/<ts>/charts.spec.json).",
     },
-    timeout_seconds=5,
+    timeout_seconds=15,
 )
 async def display_chart(
-    charts: Annotated[
-        list[ChartItem],
-        "표시할 차트 항목 리스트. 각 항목은 chart_type + series (또는 option) 를 포함한다.",
+    source: Annotated[
+        str,
+        "save_artifact 가 반환한 'result/...' 형식 charts.spec.json 파일 경로.",
     ],
+    title: Annotated[str, "아티팩트 패널 헤더에 표시할 제목"] = "",
 ) -> ToolResult:
-    """ECharts 차트를 아티팩트 패널에 표시한다."""
-    if not charts:
+    """ChartSpecV1 spec 파일을 ECharts option 리스트로 렌더링해 아티팩트 패널에 표시한다.
+
+    spec 파일은 보존하고, 같은 폴더에 렌더된 ``charts.json`` 을 생성한다.
+    프론트엔드는 ``charts.json`` 만 fetch 한다.
+    """
+    resolved_url, resolve_error = _resolve_image_source(source)
+    if resolve_error:
         return ToolResult(
-            content="[display_chart 오류] charts 가 비어 있습니다.",
+            content=f"[display_chart 오류] {resolve_error}",
             is_error=True,
         )
 
-    items: list[dict[str, Any]] = []
-    for idx, item in enumerate(charts):
-        payload, error = _resolve_chart_item(item)
-        if error:
-            return ToolResult(
-                content=f"[display_chart 오류] charts[{idx}] — {error}",
-                is_error=True,
-            )
-        items.append(payload)
+    if not resolved_url.startswith("/result/"):
+        return ToolResult(
+            content=(
+                f"[display_chart 오류] source 는 'result/...' 경로만 허용됩니다: {source!r}. "
+                "save_artifact 가 반환한 spec 경로를 그대로 전달하세요."
+            ),
+            is_error=True,
+        )
+
+    rel = resolved_url[len("/result/") :]
+    spec_path: Path = RESULT_DIR / rel
+
+    if not spec_path.name.endswith(".spec.json"):
+        return ToolResult(
+            content=(
+                f"[display_chart 오류] source 파일명은 '.spec.json' 으로 끝나야 합니다: {source!r}. "
+                "save_artifact(kind='json', filename='charts.spec.json', content=...) 흐름을 사용하세요."
+            ),
+            is_error=True,
+        )
+
+    if not spec_path.exists():
+        return ToolResult(
+            content=f"[display_chart 오류] spec 파일을 찾을 수 없습니다: {source!r}",
+            is_error=True,
+        )
+
+    try:
+        raw_text = spec_path.read_text(encoding="utf-8")
+        raw_spec = json.loads(raw_text)
+    except (OSError, json.JSONDecodeError) as exc:
+        return ToolResult(
+            content=f"[display_chart 오류] spec 파일 읽기/파싱 실패: {exc}",
+            is_error=True,
+        )
+
+    try:
+        spec = ChartSpecV1.model_validate(raw_spec)
+    except ValidationError as exc:
+        return ToolResult(
+            content=(
+                f"[display_chart 오류] ChartSpecV1 검증 실패: {exc.error_count()} 건. "
+                f"첫 오류: {exc.errors()[0]['msg']} at {'.'.join(str(p) for p in exc.errors()[0]['loc'])}"
+            ),
+            is_error=True,
+        )
+
+    try:
+        rendered = render_spec_to_echarts(spec, base_dir=spec_path.parent)
+    except (FileNotFoundError, ValueError) as exc:
+        return ToolResult(
+            content=f"[display_chart 오류] 렌더링 실패: {exc}",
+            is_error=True,
+        )
+
+    # 렌더된 결과를 sibling charts.json 으로 저장
+    rendered_name = spec_path.name.replace(".spec.json", ".json")
+    rendered_path = spec_path.with_name(rendered_name)
+    try:
+        rendered_path.write_text(
+            json.dumps(rendered, ensure_ascii=False), encoding="utf-8"
+        )
+    except OSError as exc:
+        return ToolResult(
+            content=f"[display_chart 오류] rendered 파일 저장 실패: {exc}",
+            is_error=True,
+        )
+
+    rendered_url = "/result/" + str(rendered_path.relative_to(RESULT_DIR)).replace(
+        "\\", "/"
+    )
+    logger.info("display_chart rendered %d charts -> %s", len(rendered), rendered_path)
 
     return ToolResult(
-        content=f"{len(items)}개 차트를 아티팩트 패널에 표시했습니다.",
-        data={"kind": "chart", "items": items},
+        content=f"{len(rendered)}개 차트를 아티팩트 패널에 표시했습니다.",
+        data={"kind": "chart", "src": rendered_url, "title": title},
     )
 
 
