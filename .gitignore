@@ -6,7 +6,6 @@ wheels/
 uv.lock
 .ruff_cache
 .pytest_cache
-backend/_version.py
 
 # Build artifacts
 build/
