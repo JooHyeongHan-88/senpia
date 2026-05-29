@@ -125,7 +125,7 @@ save_artifact(filename="data.parquet", kind="parquet", source="$df_varname")
 
 | 파일 | 용도 |
 |---|---|
-| `SKILLS/time_check.md` | 시나리오 C — now/save_artifact/display_image/display_markdown 4종 검증 |
+| `SKILLS/time_check.md` | 시나리오 C — now/save_artifact/display_markdown 3종 검증 |
 | `SKILLS/data_summary.md` | 시나리오 D/E — api_refs + exec_code/call_function/eval_expression 검증 |
 | `SKILLS/report_writer.md` | 시나리오 E — save_artifact/display_markdown 검증 |
 | `AGENTS/analyst_agent.md` | 시나리오 D/E — Case 3 자동 라우팅 + sub-agent 위임 검증 |
@@ -140,7 +140,7 @@ Mock 시나리오 트리거 (브라우저에서 입력):
 |---|---|---|
 | A (echo) | (그 외 모든 입력) | 기본 스트리밍 |
 | B (ask_user) | `추천해줘`, `골라줘` | ReasoningBlock, AskUserCard(both) |
-| C (time_check) | `지금 시간`, `현재 시각` | SkillBadge, ArtifactImage(1장), ArtifactMarkdown |
+| C (time_check) | `지금 시간`, `현재 시각` | SkillBadge, ArtifactMarkdown |
 | D (data_summary) | `데이터 요약`, `요약 통계` | AgentTrail, TodoProgress, ArtifactChart(4개 그리드) — parquet 3개 + charts.spec.json + charts.json 생성 |
 | E (composite) | `전체 분석 보고서`, `종합 보고서` | 2단 sub-agent, ArtifactChart(7개·2페이지)+ArtifactMarkdown+ArtifactImage(10장 갤러리) — parquet 4개 + charts.spec.json + charts.json 생성 |
 

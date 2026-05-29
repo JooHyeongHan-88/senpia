@@ -26,9 +26,21 @@ export function loadSessions() {
   }
 }
 
+// tool 세그먼트의 data(차트 ECharts option 등 bulky 페이로드)는 영속 대상에서 제외한다.
+// 아티팩트 본체는 디스크 + message.artifactChips 가 이미 보유하고 패널이 재fetch 하며,
+// ToolStep 은 detail 만 렌더하므로 data 가 없어도 복원에 지장이 없다. (localStorage 용량 절약)
+function _stripToolData(key, value) {
+  if (value && typeof value === "object" && value.kind === "tool" && "data" in value) {
+    const copy = { ...value };
+    delete copy.data;
+    return copy;
+  }
+  return value;
+}
+
 export function saveSessions(sessions) {
   try {
-    localStorage.setItem(KEY_SESSIONS, JSON.stringify(sessions));
+    localStorage.setItem(KEY_SESSIONS, JSON.stringify(sessions, _stripToolData));
   } catch {
     // QuotaExceededError 가능 — UX 차원에서 사용자에게 알리는 건 추후 과제.
   }

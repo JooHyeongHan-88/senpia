@@ -34,22 +34,41 @@ const UPDATE_POLL_MS = 500;
 
 // 탭이 열려 있는 동안 서버를 살려두기 위한 브라우저 레벨 presence ID.
 // 세션 유무와 무관하게 탭이 닫힐 때까지 연결을 유지하므로 세션 삭제 시 서버가
-// 종료되는 버그를 방지한다. 페이지 로드마다 새로 발급해도 grace 기간 안에
-// 새 연결이 올라와 watchdog 은 계속 "alive" 로 판정한다.
+// 종료되는 버그를 방지한다.
 const BROWSER_KEEPALIVE_ID = `bpid-${crypto.randomUUID()}`;
 
 let presenceSource = null;
 let saveTimer = null;
-// 진행 중인 /api/chat 요청을 ESC 로 중지하기 위한 핸들. sendMessage 시작 시 생성되고
-// finally 에서 null 로 리셋된다. stopStreaming() 만이 abort 를 호출한다.
+// 진행 중인 /api/chat 요청을 ESC 로 중지하기 위한 핸들.
 let currentAbortController = null;
 
 // ---------- 영속화 ----------
 
+// 저장 전 tool 세그먼트의 bulky data 필드를 제거한다.
+// 아티팩트는 디스크 + artifactChips 에 이미 보존되므로 data 없이도 복원 가능.
+function _cleanSegmentsForStorage(segs) {
+  if (!segs || segs.length === 0) return segs;
+  return segs.map((seg) => {
+    if (seg.kind === "tool") return { ...seg, data: null };
+    if (seg.kind === "subagent") return { ...seg, segments: _cleanSegmentsForStorage(seg.segments) };
+    return seg;
+  });
+}
+
+function _cleanSessionsForStorage(sessions) {
+  return sessions.map((session) => ({
+    ...session,
+    messages: session.messages.map((msg) => {
+      if (!msg.segments || msg.segments.length === 0) return msg;
+      return { ...msg, segments: _cleanSegmentsForStorage(msg.segments) };
+    }),
+  }));
+}
+
 function scheduleSave() {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    saveSessions(ui.sessions);
+    saveSessions(_cleanSessionsForStorage(ui.sessions));
     saveTimer = null;
   }, SAVE_DEBOUNCE_MS);
 }
@@ -59,7 +78,7 @@ function flushSave() {
     clearTimeout(saveTimer);
     saveTimer = null;
   }
-  saveSessions(ui.sessions);
+  saveSessions(_cleanSessionsForStorage(ui.sessions));
 }
 
 // ---------- presence ----------
@@ -68,7 +87,6 @@ function flushSave() {
 
 function openPresence(clientId) {
   closePresence();
-  // EventSource 단일 채널 = 생존 신호. 백엔드 watchdog 이 끊김을 감지하면 자동 정리.
   presenceSource = new EventSource(`/api/presence?client_id=${clientId}`);
 }
 
@@ -94,7 +112,7 @@ function newSession() {
 }
 
 function toBackendMessages(uiMessages) {
-  // UI 모델 → backend Message 스키마. toolStatus/id/createdAt 은 백엔드에 보내지 않음.
+  // UI 모델 → backend Message 스키마. segments/id/createdAt 은 백엔드에 보내지 않음.
   return uiMessages.map((m) => ({ role: m.role, content: m.content }));
 }
 
@@ -147,7 +165,6 @@ export async function deleteSession(id) {
       await restoreConversation(next.id, toBackendMessages(next.messages));
     } else {
       // 세션이 모두 사라졌지만 브라우저는 열려 있다 — keepalive 로 전환해 서버 종료를 막는다.
-      // 다음 createSession() 이 호출되면 openPresence(sessionId) 가 이 연결을 교체한다.
       openPresence(BROWSER_KEEPALIVE_ID);
     }
   }
@@ -184,13 +201,12 @@ export async function sendMessage(text) {
   }
 
   // 직전 assistant 메시지에 미답변 askUser 가 있으면 answered 로 마킹한다.
-  // 사용자가 옵션 버튼 또는 직접 입력으로 응답을 보내는 시점에 카드를 비활성화한다.
   {
     const cur = activeSession();
     if (cur) {
       for (let i = cur.messages.length - 1; i >= 0; i--) {
         const m = cur.messages[i];
-        if (m.role === "user") break; // 직전 user 메시지를 만나면 중단
+        if (m.role === "user") break;
         if (m.role === "assistant" && m.askUser && !m.askUser.answered) {
           m.askUser = { ...m.askUser, answered: true };
           break;
@@ -203,31 +219,27 @@ export async function sendMessage(text) {
   if (!session) return;
 
   const now = Date.now();
-
-  // composerSkills 가 비어 있지 않다면 사용자가 슬래시로 명시한 것 — 응답이 오기 전에도
-  // 즉시 뱃지가 보이도록 초기값으로 복사. skill_active 이벤트가 와도 동일 목록이므로 멱등.
   const forced = hasSkills ? [...ui.composerSkills] : null;
 
   const userMsg = {
     id: crypto.randomUUID(),
     role: "user",
-    content: displayContent,          // UI 표시용 — 빈 문자열 가능 (skill 만 전송한 경우)
-    appliedSkills: forced,            // 대화창 내 skill 뱃지 표시용
+    content: displayContent,
+    appliedSkills: forced,
     toolStatus: null,
     createdAt: now,
   };
+
   const assistantMsg = {
     id: crypto.randomUUID(),
     role: "assistant",
-    content: "",
-    toolStatus: null,
-    activeSkills: forced, // string[] | null — skill_active 이벤트로 채워진다
-    reasoning: "",        // ReasoningEvent 청크가 누적되는 추론 텍스트
-    todos: null,          // TodoUpdateEvent 로 갱신되는 TodoItem[] | null
-    skillComplete: null,  // SkillCompleteEvent 로 설정되는 {completed, failed, skipped} | null
+    content: "",          // 백엔드 restore 용 — delta 수신 시 함께 누적
+    segments: [],         // 시간순 Collapsible 타임라인 (Segment[] 배열)
+    activeSkills: forced, // 상단 skill 칩 (message 레벨, skill_active 이벤트로 갱신)
     askUser: null,        // AskUserEvent 로 설정되는 슬롯 질문 | null
-    agentTrail: [],       // {from, to, reason, summary, todoLog, toolCallsCount, errorCount}
-    agentProgress: [],    // {agentId, deltas, toolStatus, todos, skillComplete}
+    artifactChips: [],
+    isStopped: false,
+    isFallback: false,
     createdAt: now,
   };
 
@@ -235,7 +247,6 @@ export async function sendMessage(text) {
   session.updatedAt = now;
 
   if (!session.titleEdited && session.messages.filter((m) => m.role === "user").length === 1) {
-    // 본문 없이 skill 만 전송한 경우 skill 이름으로 제목을 채운다.
     session.title = autoTitle(displayContent || (forced ? forced.join(", ") : "새 대화"));
   }
 
@@ -243,215 +254,13 @@ export async function sendMessage(text) {
   ui.streaming = true;
   flushSave();
 
-  const appendDelta = (chunk) => {
-    const s = activeSession();
-    if (!s) return;
-    const last = s.messages[s.messages.length - 1];
-    if (!last || last.role !== "assistant") return;
-    last.content += chunk;
-    s.updatedAt = Date.now();
-    ui.sessions = [...ui.sessions];
-    scheduleSave();
-  };
-
-  const setToolStatus = (label) => {
-    const s = activeSession();
-    if (!s) return;
-    const last = s.messages[s.messages.length - 1];
-    if (!last || last.role !== "assistant") return;
-    last.toolStatus = label;
-    ui.sessions = [...ui.sessions];
-    scheduleSave();
-  };
-
-  const setActiveSkills = (skills) => {
-    const s = activeSession();
-    if (!s) return;
-    const last = s.messages[s.messages.length - 1];
-    if (!last || last.role !== "assistant") return;
-    last.activeSkills = skills;
-    ui.sessions = [...ui.sessions];
-    // 스킬 목록은 내용이 아니므로 저장은 생략 (메모리에만 유지)
-  };
-
-  const appendReasoning = (chunk) => {
-    const s = activeSession();
-    if (!s) return;
-    const last = s.messages[s.messages.length - 1];
-    if (!last || last.role !== "assistant") return;
-    last.reasoning = (last.reasoning ?? "") + chunk;
-    s.updatedAt = Date.now();
-    ui.sessions = [...ui.sessions];
-    scheduleSave();
-  };
-
-  const setTodos = (todos) => {
-    const s = activeSession();
-    if (!s) return;
-    const last = s.messages[s.messages.length - 1];
-    if (!last || last.role !== "assistant") return;
-    last.todos = todos;
-    ui.sessions = [...ui.sessions];
-    scheduleSave();
-  };
-
-  const setSkillComplete = (data) => {
-    const s = activeSession();
-    if (!s) return;
-    const last = s.messages[s.messages.length - 1];
-    if (!last || last.role !== "assistant") return;
-    last.skillComplete = data;
-    ui.sessions = [...ui.sessions];
-    scheduleSave();
-  };
-
-  const setAskUser = (payload) => {
-    const s = activeSession();
-    if (!s) return;
-    const last = s.messages[s.messages.length - 1];
-    if (!last || last.role !== "assistant") return;
-    last.askUser = payload;
-    ui.sessions = [...ui.sessions];
-    scheduleSave();
-  };
-
-  // ── 멀티 에이전트 이벤트 핸들러 ─────────────────────────────────────
-  // AgentSwitchEvent → trail 에 새 항목 push (요약 비어 있음)
-  const pushAgentSwitch = (from, to, reason) => {
-    const s = activeSession();
-    if (!s) return;
-    const last = s.messages[s.messages.length - 1];
-    if (!last || last.role !== "assistant") return;
-    last.agentTrail = [
-      ...(last.agentTrail ?? []),
-      { from, to, reason, summary: null },
-    ];
-    // 새 progress 슬롯도 미리 열어 둔다 (delta 누적용).
-    last.agentProgress = [
-      ...(last.agentProgress ?? []),
-      {
-        agentId: to,
-        deltas: "",
-        toolStatus: null,
-        todos: null,
-        skillComplete: null,
-        activeSkills: null, // sub-agent SKILL 뱃지 (AgentProgressEvent[skill_active])
-        reasoning: "",      // sub-agent 의 ReasoningEvent 청크 누적 — 별도 토글 블록으로 렌더
-      },
-    ];
-    ui.sessions = [...ui.sessions];
-    scheduleSave();
-  };
-
-  // AgentReturnEvent → trail 의 마지막 항목 summary + todo_log 채움.
-  // todo_log 가 있으면 progress 슬롯 todos 도 동기화 (todo_update 미수신 시 fallback).
-  const pushAgentReturn = (from, summary, todoLog, toolCallsCount, errorCount) => {
-    const s = activeSession();
-    if (!s) return;
-    const last = s.messages[s.messages.length - 1];
-    if (!last || last.role !== "assistant") return;
-
-    const trail = [...(last.agentTrail ?? [])];
-    for (let i = trail.length - 1; i >= 0; i--) {
-      if (trail[i].to === from && trail[i].summary == null) {
-        trail[i] = { ...trail[i], summary, todoLog: todoLog ?? [], toolCallsCount: toolCallsCount ?? 0, errorCount: errorCount ?? 0 };
-        break;
-      }
-    }
-    last.agentTrail = trail;
-
-    // progress 슬롯 todos fallback — todo_update 없이 완료된 경우 보완.
-    if (todoLog && todoLog.length > 0) {
-      const progress = [...(last.agentProgress ?? [])];
-      for (let i = progress.length - 1; i >= 0; i--) {
-        if (progress[i].agentId === from) {
-          if (!progress[i].todos || progress[i].todos.length === 0) {
-            progress[i] = { ...progress[i], todos: todoLog };
-            last.agentProgress = progress;
-          }
-          break;
-        }
-      }
-    }
-
-    ui.sessions = [...ui.sessions];
-    scheduleSave();
-  };
-
-  // AgentProgressEvent → 현재 활성 progress 슬롯에 inner 이벤트 반영
-  const handleAgentProgress = (agentId, innerType, innerPayload) => {
-    const s = activeSession();
-    if (!s) return;
-    const last = s.messages[s.messages.length - 1];
-    if (!last || last.role !== "assistant") return;
-    const progress = [...(last.agentProgress ?? [])];
-    // 같은 agentId 의 마지막 슬롯을 찾는다 (없으면 새로 추가).
-    let slotIdx = -1;
-    for (let i = progress.length - 1; i >= 0; i--) {
-      if (progress[i].agentId === agentId) {
-        slotIdx = i;
-        break;
-      }
-    }
-    if (slotIdx === -1) {
-      progress.push({
-        agentId,
-        deltas: "",
-        toolStatus: null,
-        todos: null,
-        skillComplete: null,
-        activeSkills: null,
-        reasoning: "",
-      });
-      slotIdx = progress.length - 1;
-    }
-    const slot = { ...progress[slotIdx] };
-    if (innerType === "delta") {
-      slot.deltas += innerPayload.content ?? "";
-    } else if (innerType === "tool_call") {
-      slot.toolStatus = `🔧 ${innerPayload.call?.name ?? "?"} 호출 중...`;
-    } else if (innerType === "tool_result") {
-      const prefix = innerPayload.is_error ? "⚠️" : "🔧";
-      slot.toolStatus = `${prefix} ${innerPayload.name ?? "?"} → ${innerPayload.result ?? ""}`;
-      // 서브 에이전트에서도 시각화 도구 결과를 아티팩트 패널에 표시
-      if (_isArtifactToolResult(innerPayload)) {
-        const s = activeSession();
-        const last = s?.messages[s.messages.length - 1];
-        if (last && last.role === "assistant") {
-          const chip = makeArtifactChip(innerPayload.data.kind, innerPayload.data);
-          last.artifactChips = [...(last.artifactChips ?? []), chip];
-          ui.activeArtifactId = chip.id;
-          ui.artifactPanelOpen = true;
-        }
-      }
-    } else if (innerType === "reasoning") {
-      // sub-agent 의 추론도 메인과 동일하게 ReasoningBlock 토글로 표시 — 별도 필드에 누적.
-      slot.reasoning = (slot.reasoning ?? "") + (innerPayload.content ?? "");
-    } else if (innerType === "todo_update") {
-      slot.todos = innerPayload.todos ?? [];
-    } else if (innerType === "skill_active") {
-      slot.activeSkills = innerPayload.skills ?? [];
-    } else if (innerType === "skill_complete") {
-      slot.skillComplete = {
-        completed: innerPayload.completed ?? 0,
-        failed: innerPayload.failed ?? 0,
-        skipped: innerPayload.skipped ?? 0,
-      };
-    }
-    progress[slotIdx] = slot;
-    last.agentProgress = progress;
-    ui.sessions = [...ui.sessions];
-    scheduleSave();
-  };
-
   // 백엔드로 보낼 force_skills 를 미리 캡처 후, 다음 입력에 잔여물이 남지 않도록 즉시 리셋.
   const forceSkills = forced;
   ui.composerSkills = [];
 
-  // LLM 에 전달할 실제 메시지 — 본문이 비어 있으면 skill 이름으로 대체해 의미 있는 컨텍스트 제공.
+  // LLM 에 전달할 실제 메시지 — 본문이 비어 있으면 skill 이름으로 대체.
   const llmContent = displayContent || (forceSkills ? forceSkills.join(", ") : "");
 
-  // 이번 턴 전용 AbortController. stopStreaming() 이 이 핸들을 통해 fetch + reader 를 풀어준다.
   currentAbortController = new AbortController();
   const abortSignal = currentAbortController.signal;
 
@@ -462,77 +271,151 @@ export async function sendMessage(text) {
       signal: abortSignal,
     });
     if (!response.ok || !response.body) {
-      appendDelta(`[error] HTTP ${response.status}`);
+      const s = activeSession();
+      const msg = s?.messages.at(-1);
+      if (msg?.role === "assistant") {
+        const errText = `[error] HTTP ${response.status}`;
+        msg.content += errText;
+        _applyEvent(msg.segments, { type: "delta", content: errText }, null, null);
+        ui.sessions = [...ui.sessions];
+        scheduleSave();
+      }
       return;
     }
 
-    await parseSseStream(response.body, (ev) => {
-      if (ev.type === "delta") {
-        appendDelta(ev.content);
-      } else if (ev.type === "tool_call") {
-        setToolStatus(`🔧 ${ev.call.name} 호출 중...`);
-      } else if (ev.type === "tool_result") {
-        const prefix = ev.is_error ? "⚠️" : "🔧";
-        setToolStatus(`${prefix} ${ev.name} → ${ev.result}`);
-        // 시각화 도구 결과 → 아티팩트 패널 + 메시지 칩 추가
-        if (_isArtifactToolResult(ev)) {
-          const s = activeSession();
-          const last = s?.messages[s.messages.length - 1];
-          if (last && last.role === "assistant") {
-            const chip = makeArtifactChip(ev.data.kind, ev.data);
-            last.artifactChips = [...(last.artifactChips ?? []), chip];
-            ui.activeArtifactId = chip.id;
-            ui.artifactPanelOpen = true;
-            ui.sessions = [...ui.sessions];
-            scheduleSave();
+    await parseSseStream(
+      response.body,
+      (ev) => {
+        const s = activeSession();
+        if (!s) return;
+        const msg = s.messages.at(-1);
+        if (!msg || msg.role !== "assistant") return;
+
+        // 아티팩트 칩 추가 콜백 — 항상 message 레벨 (서브에이전트 내부 도구도 동일)
+        const addChip = (toolEv) => {
+          const chip = makeArtifactChip(toolEv.data.kind, toolEv.data);
+          msg.artifactChips = [...(msg.artifactChips ?? []), chip];
+          ui.activeArtifactId = chip.id;
+          ui.artifactPanelOpen = true;
+        };
+
+        // 최상위 scope 의 activeSkills 세터
+        const setTopSkills = (skills) => {
+          msg.activeSkills = skills;
+        };
+
+        if (ev.type === "delta") {
+          // content 는 restore 용으로 계속 누적한다.
+          msg.content += ev.content ?? "";
+          s.updatedAt = Date.now();
+          _applyEvent(msg.segments, ev, addChip, setTopSkills);
+          ui.sessions = [...ui.sessions];
+          scheduleSave();
+        } else if (
+          ev.type === "reasoning" ||
+          ev.type === "tool_call" ||
+          ev.type === "tool_result" ||
+          ev.type === "todo_update" ||
+          ev.type === "skill_complete"
+        ) {
+          _applyEvent(msg.segments, ev, addChip, setTopSkills);
+          ui.sessions = [...ui.sessions];
+          scheduleSave();
+        } else if (ev.type === "skill_active") {
+          // message 레벨 칩 갱신 (segments 바깥 상단에 표시)
+          msg.activeSkills = ev.skills ?? [];
+          ui.sessions = [...ui.sessions];
+        } else if (ev.type === "error") {
+          if (ev.is_fallback) {
+            msg.isFallback = true;
+            // 마지막 text 세그먼트에 fallback 마킹 (Segment.svelte 가 스타일 분기)
+            for (let i = msg.segments.length - 1; i >= 0; i--) {
+              if (msg.segments[i].kind === "text") {
+                msg.segments[i].isFallback = true;
+                break;
+              }
+            }
+          } else {
+            const errContent = `\n\n[error] ${ev.message}`;
+            msg.content += errContent;
+            _applyEvent(msg.segments, { type: "delta", content: errContent }, null, null);
           }
-        }
-      } else if (ev.type === "skill_active") {
-        setActiveSkills(ev.skills);
-      } else if (ev.type === "error") {
-        if (ev.is_fallback) {
-          // max_iterations 도달 후 자연어 fallback 응답이 이미 스트리밍된 경우.
-          // 콘텐츠 추가 없이 마지막 메시지에 fallback 플래그만 설정한다.
-          const s = activeSession();
-          if (s) {
-            const last = s.messages[s.messages.length - 1];
-            if (last?.role === "assistant") {
-              last.isFallback = true;
-              ui.sessions = [...ui.sessions];
-              scheduleSave();
+          ui.sessions = [...ui.sessions];
+          scheduleSave();
+        } else if (ev.type === "ask_user") {
+          msg.askUser = {
+            question: ev.question,
+            slot_key: ev.slot_key,
+            options: ev.options ?? null,
+            tool_name: ev.tool_name ?? null,
+            // 백엔드가 명시한 input_type 을 신뢰하되, 누락 시 options 유무로 폴백.
+            input_type: ev.input_type ?? (ev.options ? "both" : "text"),
+            answered: false,
+          };
+          ui.sessions = [...ui.sessions];
+          scheduleSave();
+        } else if (ev.type === "agent:switch") {
+          // 서브에이전트 세그먼트를 push — 내부 segments 는 agent:progress 가 채운다.
+          msg.segments.push({
+            kind: "subagent",
+            id: _segId(),
+            agentId: ev.to_agent,
+            reason: ev.reason ?? "",
+            status: "running",
+            summary: null,
+            segments: [],
+            activeSkills: null,
+          });
+          ui.sessions = [...ui.sessions];
+          scheduleSave();
+        } else if (ev.type === "agent:progress") {
+          // 해당 agentId 의 마지막 running 서브에이전트 세그먼트에 재귀 적용.
+          const sub = _findLastRunningSubagent(msg.segments, ev.agent_id);
+          if (sub) {
+            const inner = { type: ev.inner_type, ...(ev.inner_payload ?? {}) };
+            _applyEvent(
+              sub.segments,
+              inner,
+              addChip,                             // 칩은 message 레벨
+              (skills) => { sub.activeSkills = skills; }, // 스킬은 subagent 레벨
+            );
+          }
+          ui.sessions = [...ui.sessions];
+          scheduleSave();
+        } else if (ev.type === "agent:return") {
+          // 서브에이전트 세그먼트를 done 으로 확정.
+          const sub = _findLastRunningSubagent(msg.segments, ev.from_agent);
+          if (sub) {
+            sub.status = "done";
+            sub.summary = ev.summary ?? null;
+            // todo_update 없이 완료된 경우 todo_log 로 폴백 (내부 todo 세그먼트 추가).
+            const hasTodo = sub.segments.some((sg) => sg.kind === "todo");
+            if (!hasTodo && ev.todo_log && ev.todo_log.length > 0) {
+              sub.segments.push({
+                kind: "todo",
+                id: _segId(),
+                todos: ev.todo_log,
+                complete: null,
+              });
             }
           }
-        } else {
-          appendDelta(`\n\n[error] ${ev.message}`);
+          ui.sessions = [...ui.sessions];
+          scheduleSave();
         }
-      } else if (ev.type === "reasoning") {
-        appendReasoning(ev.content);
-      } else if (ev.type === "todo_update") {
-        setTodos(ev.todos);
-      } else if (ev.type === "skill_complete") {
-        setSkillComplete({ completed: ev.completed, failed: ev.failed, skipped: ev.skipped });
-      } else if (ev.type === "ask_user") {
-        setAskUser({
-          question: ev.question,
-          slot_key: ev.slot_key,
-          options: ev.options ?? null,
-          tool_name: ev.tool_name ?? null,
-          // 백엔드가 명시한 input_type 을 신뢰하되, 누락 시 options 유무로 폴백.
-          input_type: ev.input_type ?? (ev.options ? "both" : "text"),
-          answered: false,
-        });
-      } else if (ev.type === "agent:switch") {
-        pushAgentSwitch(ev.from_agent, ev.to_agent, ev.reason ?? "");
-      } else if (ev.type === "agent:return") {
-        pushAgentReturn(ev.from_agent, ev.summary ?? "", ev.todo_log ?? [], ev.tool_calls_count ?? 0, ev.error_count ?? 0);
-      } else if (ev.type === "agent:progress") {
-        handleAgentProgress(ev.agent_id, ev.inner_type, ev.inner_payload ?? {});
-      }
-    }, abortSignal);
+      },
+      abortSignal,
+    );
   } catch (e) {
-    // AbortError 는 stopStreaming() 이 유도한 정상 흐름이므로 에러 텍스트를 메시지에 추가하지 않는다.
+    // AbortError 는 stopStreaming() 이 유도한 정상 흐름이므로 에러 텍스트를 추가하지 않는다.
     if (e?.name !== "AbortError" && !abortSignal.aborted) {
-      appendDelta(`\n\n[error] ${String(e)}`);
+      const s = activeSession();
+      const msg = s?.messages.at(-1);
+      if (msg?.role === "assistant") {
+        const errContent = `\n\n[error] ${String(e)}`;
+        msg.content += errContent;
+        _applyEvent(msg.segments, { type: "delta", content: errContent }, null, null);
+        ui.sessions = [...ui.sessions];
+      }
     }
   } finally {
     ui.streaming = false;
@@ -541,9 +424,7 @@ export async function sendMessage(text) {
   }
 }
 
-// 특정 user 메시지 시점으로 대화를 되돌린다. 그 메시지부터 끝까지를 잘라내고,
-// 잘라낸 user 메시지 본문을 composer 에 다시 채워 사용자가 수정 후 재전송하게 한다.
-// artifact 파일은 디스크에 그대로 둔다 (메시지 배열에서만 제거됨).
+// 특정 user 메시지 시점으로 대화를 되돌린다.
 export async function rewindToMessage(messageId) {
   if (ui.streaming) return;
   const session = activeSession();
@@ -553,7 +434,6 @@ export async function rewindToMessage(messageId) {
   if (index < 0) return;
 
   const target = session.messages[index];
-  // assistant 메시지 rewind 는 의미가 모호 — UI 가 user 메시지에서만 버튼을 노출하지만 방어적 가드.
   if (target.role !== "user") return;
 
   const capturedContent = target.content ?? "";
@@ -563,25 +443,21 @@ export async function rewindToMessage(messageId) {
   ui.sessions = [...ui.sessions];
   flushSave();
 
-  // 잘린 이후 메시지에 artifact 칩이 있을 수 있으니 우측 패널을 닫는다.
   resetArtifactPanelState();
 
-  // 백엔드 history 도 일치시켜 다음 턴 LLM context 가 잘린 시점 기준이 되게 한다.
   await restoreConversation(session.id, toBackendMessages(session.messages));
 
-  // Composer 가 effect 로 감지해 textarea 에 채운다 — focus 도 같은 effect 에서 처리.
   ui.composerSeed = capturedContent;
 }
 
 // 진행 중인 응답 스트리밍을 중지한다. ESC 키 핸들러가 호출한다.
-// 마지막 assistant 메시지에 isStopped 플래그를 달아 MessageBubble 가 footer 를 렌더한다.
 export function stopStreaming() {
   if (!ui.streaming || !currentAbortController) return;
   currentAbortController.abort();
 
   const s = activeSession();
   if (!s) return;
-  const last = s.messages[s.messages.length - 1];
+  const last = s.messages.at(-1);
   if (last?.role === "assistant") {
     last.isStopped = true;
     ui.sessions = [...ui.sessions];
@@ -615,16 +491,13 @@ export async function initApp() {
       await restoreConversation(activeId, toBackendMessages(s.messages));
     }
   } else {
-    // 저장된 세션이 없어도 탭이 열려 있는 동안 서버를 유지한다.
     openPresence(BROWSER_KEEPALIVE_ID);
   }
 
-  // 슬래시 커맨드 autocomplete 데이터 — 부팅 시 1회. 실패해도 입력은 정상 작동.
   listSkills().then((skills) => {
     ui.availableSkills = skills;
   });
 
-  // 앱 이름 동적 로드 — title 과 사이드바 brand text 동기화.
   getAppInfo()
     .then(({ name, version }) => {
       ui.appName = name;
@@ -650,7 +523,7 @@ export function toggleSidebar() {
   ui.sidebarOpen = !ui.sidebarOpen;
 }
 
-// ---------- 업데이트 (기존 로직 보존, 액션 모듈로 이전) ----------
+// ---------- 업데이트 ----------
 
 async function pollUpdate() {
   const data = await checkUpdate();
@@ -675,7 +548,6 @@ export async function startUpdate() {
   ui.applyState = { status: "starting", progress: 0, total: 0, message: "" };
   ui.modalOpen = true;
 
-  // 서버의 graceful shutdown 이 SSE 연결에 블로킹되지 않도록 선제 해제.
   closePresence();
 
   const pollId = setInterval(async () => {
@@ -683,7 +555,6 @@ export async function startUpdate() {
     if (state) {
       ui.applyState = state;
     } else {
-      // 서버가 내려가는 중 — restart 단계로 전환.
       clearInterval(pollId);
       ui.restarting = true;
     }
@@ -723,6 +594,17 @@ const _ARTIFACT_TOOL_NAMES = new Set([
 ]);
 const _ARTIFACT_KINDS = new Set(["image", "chart", "markdown"]);
 
+// harness 가 모든 tool_call 을 프론트로 yield 하지만, sentinel 도구는 전용 세그먼트
+// (subagent / todo / askUser / skill 칩) 로 따로 렌더되므로 도구 카드로 중복 표시하면 안 된다.
+const _SENTINEL_TOOL_NAMES = new Set([
+  "add_todo",
+  "complete_todo",
+  "call_sub_agent",
+  "activate_skill",
+  "complete_subagent",
+  "ask_user",
+]);
+
 function _isArtifactToolResult(ev) {
   return (
     !ev.is_error &&
@@ -730,4 +612,131 @@ function _isArtifactToolResult(ev) {
     _ARTIFACT_KINDS.has(ev.data.kind) &&
     _ARTIFACT_TOOL_NAMES.has(ev.name)
   );
+}
+
+// ---------- segments 헬퍼 ----------
+
+/** 짧은 고유 ID 생성 (세그먼트 key 용). */
+function _segId() {
+  return crypto.randomUUID().slice(0, 8);
+}
+
+/**
+ * segments 배열에서 agentId 와 일치하는 마지막 running 서브에이전트 세그먼트를 반환한다.
+ * agent:progress / agent:return 이벤트 라우팅에 사용한다.
+ *
+ * Args:
+ *   segments: 검색할 세그먼트 배열
+ *   agentId: 찾을 서브에이전트 ID
+ *
+ * Returns:
+ *   일치하는 세그먼트 객체 또는 null
+ */
+function _findLastRunningSubagent(segments, agentId) {
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const seg = segments[i];
+    if (seg.kind === "subagent" && seg.agentId === agentId && seg.status === "running") {
+      return seg;
+    }
+  }
+  return null;
+}
+
+/**
+ * SSE 이벤트를 segments 배열에 시간순으로 누적한다.
+ * 오케스트레이터와 서브에이전트가 동일 헬퍼를 재귀적으로 공유한다 — 재귀의 핵심.
+ *
+ * agent:switch / agent:progress / agent:return 은 최상위에서만 발생하므로
+ * 이 함수에서는 처리하지 않는다.
+ *
+ * Args:
+ *   segments: 누적 대상 배열 (in-place 변경)
+ *   ev: 이벤트 객체 — { type, ...payload }
+ *   addArtifactChip: 아티팩트 칩 추가 콜백 (ev) => void | null
+ *   setActiveSkills: 해당 scope 의 activeSkills 갱신 (skills[]) => void | null
+ */
+function _applyEvent(segments, ev, addArtifactChip, setActiveSkills) {
+  switch (ev.type) {
+    case "delta": {
+      // 마지막 text 세그먼트에 이어붙이거나 새로 push (도구 호출로 끊기면 복수 text 가능)
+      const last = segments.at(-1);
+      if (last?.kind === "text") {
+        last.content += ev.content ?? "";
+      } else {
+        segments.push({ kind: "text", id: _segId(), content: ev.content ?? "" });
+      }
+      break;
+    }
+    case "reasoning": {
+      const last = segments.at(-1);
+      if (last?.kind === "reasoning") {
+        last.content += ev.content ?? "";
+      } else {
+        segments.push({ kind: "reasoning", id: _segId(), content: ev.content ?? "" });
+      }
+      break;
+    }
+    case "tool_call": {
+      // sentinel 도구는 전용 세그먼트로 렌더되므로 도구 카드를 push 하지 않는다.
+      // (대응 tool_result 도 매칭 세그먼트가 없어 자연히 no-op 처리된다.)
+      if (_SENTINEL_TOOL_NAMES.has(ev.call?.name)) break;
+      segments.push({
+        kind: "tool",
+        id: _segId(),
+        callId: ev.call?.id ?? _segId(),
+        name: ev.call?.name ?? "?",
+        status: "running",
+        detail: null,
+        data: null,
+      });
+      break;
+    }
+    case "tool_result": {
+      // tool_call_id 로 대응하는 tool 세그먼트를 찾아 확정한다.
+      for (let i = segments.length - 1; i >= 0; i--) {
+        if (segments[i].kind === "tool" && segments[i].callId === ev.tool_call_id) {
+          segments[i].status = ev.is_error ? "error" : "ok";
+          segments[i].detail = ev.result ?? null;
+          segments[i].data = ev.data ?? null;
+          if (_isArtifactToolResult(ev) && addArtifactChip) {
+            addArtifactChip(ev);
+          }
+          break;
+        }
+      }
+      break;
+    }
+    case "todo_update": {
+      // add_todo 가 누적돼도 todo_update 는 항상 전체 리스트를 보내므로 단일 블록 in-place 갱신.
+      let todoIdx = -1;
+      for (let i = segments.length - 1; i >= 0; i--) {
+        if (segments[i].kind === "todo") { todoIdx = i; break; }
+      }
+      if (todoIdx >= 0) {
+        segments[todoIdx].todos = ev.todos ?? [];
+      } else {
+        segments.push({ kind: "todo", id: _segId(), todos: ev.todos ?? [], complete: null });
+      }
+      break;
+    }
+    case "skill_active": {
+      if (setActiveSkills) setActiveSkills(ev.skills ?? []);
+      break;
+    }
+    case "skill_complete": {
+      // 해당 scope 의 마지막 todo 세그먼트에 complete 통계를 설정한다.
+      const complete = {
+        completed: ev.completed ?? 0,
+        failed: ev.failed ?? 0,
+        skipped: ev.skipped ?? 0,
+      };
+      for (let i = segments.length - 1; i >= 0; i--) {
+        if (segments[i].kind === "todo") {
+          segments[i].complete = complete;
+          break;
+        }
+      }
+      break;
+    }
+  }
 }

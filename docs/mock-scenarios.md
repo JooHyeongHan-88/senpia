@@ -34,7 +34,7 @@ EXE 모드: 설정 UI 에서 Provider 드롭다운을 `mock` 으로 변경.
 |---|---|---|---|
 | **A** | (그 외 모든 입력) | — | DeltaEvent, MessageBubble markdown |
 | **B** | `추천해줘`, `골라줘`, `help me decide` | — (오케스트레이터 직접) | `ReasoningBlock`, `AskUserCard(input_type=both)` |
-| **C** | `지금 시간`, `현재 시각`, `몇 시야`, `what time` | 직접 실행 (소속 에이전트 없는 standalone SKILL) | `SkillBadge`, `ArtifactImage`(1장), `ArtifactMarkdown` |
+| **C** | `지금 시간`, `현재 시각`, `몇 시야`, `what time` | 직접 실행 (소속 에이전트 없는 standalone SKILL) | `SkillBadge`, `ArtifactMarkdown` |
 | **D** | `데이터 요약`, `요약 통계`, `summary stats` | Case 3 (data_summary → analyst_agent) | `AgentTrail`, `AgentProgress`, sub 내 `TodoProgress(3)`, sub 내 `ReasoningBlock`, `ArtifactChart`(차트 4개 그리드), `SkillCompleteBadge` |
 | **E** | `전체 분석 보고서`, `종합 보고서` | Case 3 × 2단 체이닝 | 오케스트레이터 `TodoProgress(2)`, `AgentTrail` 칩 2개, sub 내 위젯들, `ArtifactChart`(차트 7개 페이지네이션) + `ArtifactMarkdown` + `ArtifactImage`(이미지 10장 갤러리) |
 
@@ -59,15 +59,10 @@ EXE 모드: 설정 UI 에서 Provider 드롭다운을 `mock` 으로 변경.
 
 ```
 턴 1  → ToolCallEvent(now)
-턴 2  → ToolCallEvent(display_image, images=[{source=result/<session>/<ts>/favicon.svg, ...}])
-턴 3  → ToolCallEvent(save_artifact, time_log.md)
+턴 2  → ToolCallEvent(save_artifact, time_log.md)
         ToolCallEvent(display_markdown, source=result/<session>/<ts>/time_log.md)
-턴 4  → DeltaEvent — "현재 시각은 ... 입니다" 자연어 응답
+턴 3  → DeltaEvent — "현재 시각은 ... 입니다" 자연어 응답
 ```
-
-favicon.svg 는 `backend/agent/providers/mock.py::_ensure_favicon_artifact()` 가
-`WEB_DIR/assets/favicon.svg` 를 현재 턴 슬롯에 복사한다 (`display_image` 가 실제
-파일 경로를 요구하므로 예외적으로 Mock 이 디스크 작업 직접 수행).
 
 ### D. data_summary via analyst_agent (Case 3 단일 위임)
 
@@ -166,7 +161,6 @@ Mock 시나리오가 생성하는 파일은 모두 `result/` 하위에 저장된
 result/
   {세션제목}-{client_id[:8]}/      ← session_dir_name()
     {YYYYMMDD-HHmmss}/             ← turn_slot() — 같은 턴 안 호출은 동일 폴더 재사용
-      favicon.svg                  ← C 시나리오 이미지
       time_log.md                  ← C 시나리오 시각 로그
       report.md                    ← E 시나리오 writer 산출물
 ```
