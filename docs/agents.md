@@ -93,8 +93,8 @@ tools: []
 tools: ["fetch_sales", "fetch_inventory", "add_todo", "complete_todo"]
 ```
 
-- 빈 리스트: `call_sub_agent`, `complete_subagent` 를 제외한 **모든 등록 도구 사용 가능**
-- 화이트리스트 지정 시: 목록의 도구만 이 에이전트에게 노출 (`call_sub_agent` 는 항상 제외)
+- 빈 리스트: 위임 도구(`call_sub_agent` / `call_sub_agents_parallel`)와 `complete_subagent` 를 제외한 **모든 등록 도구 사용 가능**
+- 화이트리스트 지정 시: 목록의 도구만 이 에이전트에게 노출 (위임 도구는 항상 제외)
 - `add_todo`, `complete_todo` 를 화이트리스트에 포함시키면 서브 에이전트도 자체 Plan 작성 가능
 - `ask_user` 를 포함시키면 서브 에이전트가 슬롯 부족 시 사용자에게 직접 질문 가능
 
@@ -197,6 +197,29 @@ summary 에 조회한 기간, 핵심 수치, 이상 여부를 2문장 이내로 
 - 'code_review' 트리거가 들어오면 반드시 `coding_agent` 에게 `call_sub_agent` 로 위임
 ```
 
+### 순차 위임 vs 병렬 위임
+
+하나의 요청이 여러 에이전트 작업으로 나뉠 때, **작업 간 의존성**으로 위임 방식이 갈린다.
+
+| 상황 | 도구 | 동작 |
+|---|---|---|
+| 작업이 하나 / 앞 작업 산출물을 뒤 작업이 사용(의존) | `call_sub_agent(agent_name, task)` | 하나씩 **순차** 실행 (결과 기다림) |
+| 독립·완결 작업이 둘 이상(상호 무관) | `call_sub_agents_parallel(tasks=[{agent_name, task}, ...])` | **동시** 실행, 전원 완료 후 요약 통합 |
+
+```
+# 병렬 위임 예시
+사용자: "A 매출 분석과 B 재고 점검을 같이 해줘"  (서로 무관)
+  → orchestrator: call_sub_agents_parallel(tasks=[
+        {agent_name: "sales_agent",     task: "A 매출 분석 ..."},
+        {agent_name: "inventory_agent", task: "B 재고 점검 ..."}])
+  → 두 트레일이 동시에 진행되고, 합쳐진 단일 tool_result 로 복귀
+```
+
+- 동시 실행 수는 `APP_MAX_PARALLEL_SUBAGENTS`(기본 3) semaphore 로 제한된다.
+- 병렬 작업 도중 어떤 에이전트가 사용자 입력이 필요해지면 그 작업만 '입력 필요'로 종료되어
+  결과에 보고된다 — 사용자에게 직접 되묻지 않으며, 오케스트레이터가 그 작업을 `call_sub_agent`
+  로 순차 재위임한다. 따라서 **병렬은 독립·완결 작업 전용**으로 설계한다.
+
 ---
 
 ## 서브 에이전트 제약 사항
@@ -205,9 +228,11 @@ summary 에 조회한 기간, 핵심 수치, 이상 여부를 2문장 이내로 
 
 | 제약 | 이유 |
 |---|---|
-| `call_sub_agent` 호출 불가 | 무한 재귀 위임 방지 |
-| 병렬·비동기 실행 불가 | 순차 실행만 지원 |
+| `call_sub_agent` / `call_sub_agents_parallel` 호출 불가 | 무한 재귀 위임 방지 (서브는 순차·병렬 모두 위임 불가) |
 | 백그라운드 실행 불가 | 결과가 반환될 때까지 동기 대기 |
+
+> 병렬은 **오케스트레이터 전용** 능력이다. 오케스트레이터는 독립 작업들을
+> `call_sub_agents_parallel` 로 동시에 실행할 수 있지만, 서브 에이전트는 다시 위임할 수 없다.
 
 서브 에이전트가 할 수 있는 것:
 

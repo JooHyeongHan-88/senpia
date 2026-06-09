@@ -46,6 +46,7 @@ logger = logging.getLogger(__name__)
 PLANNER_ADD_TODO = "add_todo"
 PLANNER_COMPLETE_TODO = "complete_todo"
 SUB_AGENT_DISPATCH = "call_sub_agent"
+SUB_AGENTS_PARALLEL_DISPATCH = "call_sub_agents_parallel"
 COMPLETE_SUB_AGENT = "complete_subagent"
 ASK_USER = "ask_user"
 ACTIVATE_SKILL = "activate_skill"

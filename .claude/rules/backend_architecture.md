@@ -104,6 +104,8 @@ run_turn(client_id, user_message, *, agent_registry, force_skills=None, ...)
         │    ├─ add_todo / complete_todo  → AgentState 직접 갱신 + TodoUpdateEvent
         │    ├─ call_sub_agent            → _dispatch_sub_agent (순차 실행)
         │    │    └─ AgentSwitch → AgentProgress×N → AgentReturn
+        │    ├─ call_sub_agents_parallel  → _dispatch_parallel_sub_agents (동시 실행)
+        │    │    └─ N개 _dispatch_sub_agent 인터리브 → 단일 통합 tool_result
         │    ├─ 슬롯 가드(validate_tool_args)
         │    │    ├─ invalid_message      → ToolResultEvent(is_error) → LLM self-correct
         │    │    └─ missing 슬롯         → AskUserEvent + 안전 종료
@@ -125,6 +127,35 @@ run_turn(client_id, user_message, *, agent_registry, force_skills=None, ...)
 - `tools` 비어 있으면 에이전트에게 전체 도구 노출. 채워져 있으면 화이트리스트만.
 - `agent_registry` 가 `None` 이거나 빈 경우 → 단층 동작 (하위호환, SKILLS 직접 라우팅).
 - `TurnBudget`: 오케스트레이터 + 모든 서브 에이전트 provider 호출 합산 상한 (`max_agent_calls`, `APP_MAX_AGENT_CALLS_PER_TURN`, 기본 10). 같은 서브 에이전트 3회 연속 위임은 `loop-guard` 로 차단.
+
+### 병렬 서브 에이전트 디스패치 (`_dispatch_parallel_sub_agents`)
+
+`call_sub_agents_parallel(tasks=[{agent_name, task}, ...])` sentinel 을 오케스트레이터가
+호출하면 독립 작업들을 **동시에** 실행한다. 순차 경로(`call_sub_agent`)는 그대로 두고
+신규 분기/함수로만 추가됐다.
+
+- **이벤트 fan-in**: task 마다 `asyncio.create_task` 로 producer 코루틴을 띄워 각자
+  `_dispatch_sub_agent` 를 실행하고, 이벤트를 공유 `asyncio.Queue` 로 흘려보낸다. 소비
+  루프가 큐에서 꺼내 그대로 yield 하므로 여러 트레일의 AgentSwitch/Progress/Return 이
+  인터리브되어 스트리밍된다.
+- **dispatch_id 상관키**: 각 task 는 `{call.id}::p{i}` 를 dispatch_id 로 받고, 그 디스패치가
+  emit 하는 모든 `agent:*` 이벤트에 실린다. 같은 이름 에이전트를 둘 이상 동시에 띄워도
+  프론트가 정확한 트레일로 라우팅한다 (`AgentSwitch/Progress/Return.dispatch_id`).
+- **단일 통합 tool_result**: 전원 완료 후 입력(task) 순서대로 요약을 합쳐 **하나의**
+  tool_result 로 append 한다. call ↔ tool_result 1:1 쌍이 유지되므로 히스토리 정합성
+  로직(F1a 쌍 보존 · F1b balancing · F7 truncation)을 건드리지 않는다.
+- **ask_user abort**: 병렬 작업 중 서브가 사용자 입력이 필요해지면(`ask_user_mode="abort"`)
+  AskUserEvent 를 사용자에게 노출하지 않고 그 작업만 '입력 필요' 에러 요약의 AgentReturn 으로
+  변환한다. orchestrator pending 은 건드리지 않으며, 오케스트레이터가 결과를 보고 `call_sub_agent`
+  로 순차 재위임한다 (병렬은 사용자 미개입 · 독립 작업 전용).
+- **동시성 상한 · 가드**: `asyncio.Semaphore(APP_MAX_PARALLEL_SUBAGENTS, 기본 3)` 로 동시
+  실행 수를 제한한다. `TurnBudget` 합산 상한은 그대로 적용되지만, 의도된 동시성이므로 같은-
+  에이전트-연속-호출 가드(`check_dispatch`)는 `skip_consecutive_guard=True` 로 건너뛴다.
+- **취소 정리**: 소비 루프가 취소되면(ESC·탭 종료) `finally` 가 모든 producer task 를
+  `cancel()` 후 `gather(return_exceptions=True)` 로 회수해 고아 task 를 남기지 않는다.
+- depth: 병렬도 오케스트레이터(depth 0)에서만 발생하고 각 서브는 `agent_registry=None`(L0)
+  으로 실행돼 중첩 위임이 차단된다. `SUB_AGENTS_PARALLEL_DISPATCH` 는 `_filter_specs_for_sub_agent`
+  의 forbidden 에 포함돼 서브 에이전트 시야에서 제거된다.
 
 ### 라이브러리 런타임 인프라 도구 (8개)
 

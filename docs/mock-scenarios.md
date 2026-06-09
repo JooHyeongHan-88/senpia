@@ -37,6 +37,7 @@ EXE 모드: 설정 UI 에서 Provider 드롭다운을 `mock` 으로 변경.
 | **C** | `지금 시간`, `현재 시각`, `몇 시야`, `what time` | 직접 실행 (소속 에이전트 없는 standalone SKILL) | `SkillBadge`, `ArtifactMarkdown` |
 | **D** | `데이터 요약`, `요약 통계`, `summary stats` | Case 3 (data_summary → analyst_agent) | `AgentTrail`, `AgentProgress`, sub 내 `TodoProgress(3)`, sub 내 `ReasoningBlock`, `ArtifactChart`(차트 6개 그리드 — 그룹 scatter/ecdf 로 레전드 컨트롤), `SkillCompleteBadge` |
 | **E** | `전체 분석 보고서`, `종합 보고서` | Case 3 × 2단 체이닝 | 오케스트레이터 `TodoProgress(2)`, `AgentTrail` 칩 2개, sub 내 위젯들, `ArtifactChart`(차트 7개 페이지네이션) + `ArtifactMarkdown` + `ArtifactImage`(이미지 10장 갤러리) |
+| **F** | `병렬 분석`, `동시 분석`, `parallel` | `call_sub_agents_parallel`(analyst ∥ writer 동시) | `AgentTrail` 칩 2개가 **동시에** running → 인터리브 진행, dispatch_id 라우팅, 단일 통합 tool_result → 최종 통합 보고 |
 
 ---
 
@@ -133,6 +134,33 @@ E 시나리오는 차트 7개 list → 페이지네이션(1페이지 6 + 2페이
 
 ---
 
+### F. parallel — analyst ∥ writer 동시 위임
+
+```
+오케스트레이터
+  턴 1  → ReasoningEvent(독립성 판단)
+        + ToolCallEvent(call_sub_agents_parallel, tasks=[
+              {analyst_agent, "요약 통계 + 차트"},   ← composite marker 없음 → D analyst sub 재사용
+              {writer_agent,  "개요 리포트"}])         ← → E writer sub 재사용
+
+  (두 sub 가 동시에 실행 — AgentSwitch/Progress/Return 이 인터리브 스트리밍)
+  analyst_agent sub : D analyst 5턴 흐름 (parquet + spec → 차트 6개)
+  writer_agent  sub : E writer 3턴 흐름 (report.md + 색상 카드 갤러리)
+
+오케스트레이터
+  턴 2  → 통합 tool_result(두 요약 블록) 수신 → ReasoningEvent + DeltaEvent 통합 보고
+```
+
+F 는 별도 sub 흐름을 추가하지 않고 D analyst·E writer 를 그대로 재사용한다(composite
+marker 미부여로 라우팅). 검증 포인트는 **두 `AgentTrail` 칩이 동시에 running** 상태로
+인터리브 진행되는지, dispatch_id 로 각 트레일이 정확히 채워지는지, 그리고 병렬 위임이
+**단일 통합 tool_result** 로 합쳐져 오케스트레이터에 돌아오는지다.
+
+각 sub 는 격리된 messages 와 (`asyncio.create_task` 가 복사한) 독립 contextvars 를 갖는다.
+따라서 두 analyst 의 namespace·turn_slot 캐시도 분리되어 동시 실행 시 상호 간섭이 없다.
+
+---
+
 ## 분기 우선순위
 
 `MockProvider.astream` 의 분기 순서:
@@ -141,7 +169,9 @@ E 시나리오는 차트 7개 list → 페이지네이션(1페이지 6 + 2페이
 1  sub-agent context 감지 (system marker)
      ├─ analyst_agent + [E-composite]  → E analyst sub
      ├─ writer_agent  + [E-composite]  → E writer sub
-     └─ analyst_agent (marker 없음)     → D analyst sub
+     ├─ writer_agent  (marker 없음)     → E writer sub (F 재사용)
+     └─ analyst_agent (marker 없음)     → D analyst sub (F·D 공용)
+2a F parallel      (트리거 또는 진행 중 상태 — E 보다 먼저 검사)
 2  E composite     (트리거 또는 진행 중 상태)
 3  D single        (트리거 또는 진행 중 상태)
 4  C time_check    (트리거 또는 진행 중 상태)

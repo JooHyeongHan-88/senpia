@@ -382,10 +382,13 @@ export async function sendMessage(text) {
           scheduleSave();
         } else if (ev.type === "agent:switch") {
           // 서브에이전트 세그먼트를 push — 내부 segments 는 agent:progress 가 채운다.
+          // dispatchId: 병렬 실행 시 같은 이름 에이전트가 둘 이상 동시에 떠도 이벤트를
+          // 정확한 트레일로 라우팅하는 상관키 (백엔드가 디스패치별로 부여).
           msg.segments.push({
             kind: "subagent",
             id: _segId(),
             agentId: ev.to_agent,
+            dispatchId: ev.dispatch_id ?? null,
             reason: ev.reason ?? "",
             status: "running",
             summary: null,
@@ -395,8 +398,8 @@ export async function sendMessage(text) {
           ui.sessions = [...ui.sessions];
           scheduleSave();
         } else if (ev.type === "agent:progress") {
-          // 해당 agentId 의 마지막 running 서브에이전트 세그먼트에 재귀 적용.
-          const sub = _findLastRunningSubagent(msg.segments, ev.agent_id);
+          // dispatchId 우선 → 없으면 agentId 기반 마지막 running 세그먼트에 재귀 적용.
+          const sub = _findSubagentForEvent(msg.segments, ev);
           if (sub) {
             const inner = { type: ev.inner_type, ...(ev.inner_payload ?? {}) };
             _applyEvent(
@@ -409,8 +412,8 @@ export async function sendMessage(text) {
           ui.sessions = [...ui.sessions];
           scheduleSave();
         } else if (ev.type === "agent:return") {
-          // 서브에이전트 세그먼트를 done 으로 확정.
-          const sub = _findLastRunningSubagent(msg.segments, ev.from_agent);
+          // 서브에이전트 세그먼트를 done 으로 확정 (dispatchId 우선 라우팅).
+          const sub = _findSubagentForEvent(msg.segments, ev);
           if (sub) {
             sub.status = "done";
             sub.summary = ev.summary ?? null;
@@ -649,6 +652,7 @@ const _SENTINEL_TOOL_NAMES = new Set([
   "add_todo",
   "complete_todo",
   "call_sub_agent",
+  "call_sub_agents_parallel",
   "activate_skill",
   "complete_subagent",
   "ask_user",
@@ -689,6 +693,34 @@ function _findLastRunningSubagent(segments, agentId) {
     }
   }
   return null;
+}
+
+/**
+ * agent:progress / agent:return 이벤트를 올바른 서브에이전트 세그먼트로 라우팅한다.
+ *
+ * dispatch_id 가 있으면(병렬 실행) 그 상관키로 정확히 매칭한다 — 같은 이름 에이전트가
+ * 둘 이상 동시에 떠도 충돌하지 않는다. dispatch_id 가 없으면(구 세션·순차 폴백)
+ * agentId 기반 '마지막 running' 휴리스틱으로 되돌아간다.
+ *
+ * Args:
+ *   segments: 검색할 세그먼트 배열
+ *   ev: agent:progress(agent_id) 또는 agent:return(from_agent) 이벤트
+ *
+ * Returns:
+ *   일치하는 subagent 세그먼트 객체 또는 null
+ */
+function _findSubagentForEvent(segments, ev) {
+  const agentId = ev.agent_id ?? ev.from_agent;
+  if (ev.dispatch_id) {
+    for (let i = segments.length - 1; i >= 0; i--) {
+      const seg = segments[i];
+      if (seg.kind === "subagent" && seg.dispatchId === ev.dispatch_id) {
+        return seg;
+      }
+    }
+    // dispatch_id 가 왔는데 매칭 세그먼트가 없으면(이론상 드묾) 이름 기반 폴백.
+  }
+  return _findLastRunningSubagent(segments, agentId);
 }
 
 /**

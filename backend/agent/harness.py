@@ -30,9 +30,9 @@ import uuid
 import json
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
-from agent.config import MAX_AGENT_DEPTH
+from agent.config import MAX_AGENT_DEPTH, MAX_PARALLEL_SUBAGENTS
 from agent.guard import validate_tool_args
 from agent.models import (
     MALFORMED_TOOL_ARGS_KEY,
@@ -68,6 +68,7 @@ from agent.registries.tools import (
     PLANNER_ADD_TODO,
     PLANNER_COMPLETE_TODO,
     SUB_AGENT_DISPATCH,
+    SUB_AGENTS_PARALLEL_DISPATCH,
     ToolRegistry,
 )
 from agent.runtime import introspect
@@ -259,12 +260,13 @@ async def run_turn(
             yield TodoUpdateEvent(todos=list(state.todo_list))
 
         # 오케스트레이터: COMPLETE_SUB_AGENT 는 서브 에이전트 전용이라 숨김.
-        # AGENTS 없으면 SUB_AGENT_DISPATCH 도 제거.
+        # AGENTS 없으면 위임 도구(순차·병렬)도 제거.
+        _delegation_tools = {SUB_AGENT_DISPATCH, SUB_AGENTS_PARALLEL_DISPATCH}
         orchestrator_specs = [
             s
             for s in registry.specs()
             if s.name != COMPLETE_SUB_AGENT
-            and (has_agents or s.name != SUB_AGENT_DISPATCH)
+            and (has_agents or s.name not in _delegation_tools)
         ]
         # api_refs 가 있는 SKILL 이 활성화되면 infrastructure tools 를 자동 노출한다 —
         # SKILL 본문에 명시하지 않아도 LLM 이 자체 plan 에 활용 가능.
@@ -631,6 +633,74 @@ async def _run_agent_turn(
                 )
                 continue
 
+            # 병렬 서브 에이전트 디스패치 — 독립 작업들을 동시에 실행하고 단일 결과로 합침.
+            if call.name == SUB_AGENTS_PARALLEL_DISPATCH and agent_registry is not None:
+                guard = validate_tool_args(call.arguments, registry.get(call.name))
+                if guard.invalid_message:
+                    # tasks 형식 오류 — 사용자 미개입, LLM self-correct.
+                    if _record_invalid_call(call, history_calls):
+                        result_content = _LOOP_GUARD_MESSAGE
+                    else:
+                        result_content = guard.invalid_message
+                    _append_tool_result(messages, turn_messages, call, result_content)
+                    yield ToolResultEvent(
+                        tool_call_id=call.id,
+                        name=call.name,
+                        result=result_content,
+                        is_error=True,
+                    )
+                    continue
+                if not guard.ok:
+                    first = guard.missing[0]
+                    if state is not None:
+                        state.missing_slots = {m.key: m.question for m in guard.missing}
+                        state.pending_tool = call.name
+                        state.pending_args = dict(call.arguments)
+                    _append_tool_result(
+                        messages,
+                        turn_messages,
+                        call,
+                        f"[guard] missing required slots: {[m.key for m in guard.missing]}",
+                    )
+                    yield AskUserEvent(
+                        question=first.question,
+                        slot_key=first.key,
+                        options=first.options,
+                        tool_name=call.name,
+                        input_type="both" if first.options else "text",
+                    )
+                    interrupted = True
+                    break
+
+                # 병렬 디스패처가 모든 서브 에이전트 이벤트를 인터리브해 yield 하고,
+                # 완료 후 통합 요약을 result_holder["combined"] 에 채운다.
+                parallel_result: dict[str, str] = {}
+                async for sub_ev in _dispatch_parallel_sub_agents(
+                    call=call,
+                    parent_agent_id=agent_id,
+                    agent_registry=agent_registry,
+                    skill_registry=skill_registry,
+                    prompt_registry=prompt_registry,
+                    registry=registry,
+                    provider=provider,
+                    budget=budget,
+                    depth=depth + 1,
+                    max_iterations=max_iterations,
+                    orchestrator_state=state,
+                    max_parallel=MAX_PARALLEL_SUBAGENTS,
+                    result_holder=parallel_result,
+                ):
+                    yield sub_ev
+
+                captured_summary = parallel_result.get(
+                    "combined", "[error] 병렬 위임 결과가 비어 있습니다"
+                )
+                _append_tool_result(messages, turn_messages, call, captured_summary)
+                yield ToolResultEvent(
+                    tool_call_id=call.id, name=call.name, result=captured_summary
+                )
+                continue
+
             tool = registry.get(call.name)
             guard = validate_tool_args(call.arguments, tool)
             if guard.invalid_message:
@@ -786,15 +856,26 @@ async def _dispatch_sub_agent(
     depth: int,
     max_iterations: int,
     orchestrator_state: AgentState | None = None,
+    dispatch_id: str | None = None,
+    ask_user_mode: Literal["surface", "abort"] = "surface",
+    skip_consecutive_guard: bool = False,
 ) -> AsyncIterator[StreamEvent]:
     """서브 에이전트 turn 을 격리된 컨텍스트에서 실행.
 
     AgentSwitch → AgentProgress×N → AgentReturn 순으로 yield. 부모 _run_agent_turn
     이 AgentReturnEvent.summary 를 캡처해 tool_result 로 변환한다.
 
-    슬롯 부족(AskUserEvent) 발생 시: orchestrator_state 에 pending_sub_agent 저장 후
-    AskUserEvent 를 직접 yield — AgentReturnEvent 없이 종료. 부모 _run_agent_turn
-    이 AskUserEvent 를 감지해 해당 턴을 interrupted 처리한다.
+    Args:
+        dispatch_id: 이 디스패치의 고유 상관키. emit 하는 모든 agent:* 이벤트에
+            실어 프론트가 동시 실행(특히 같은 이름 에이전트)을 구분하게 한다.
+        ask_user_mode: AskUserEvent 처리 정책.
+            - "surface"(기본, 순차): orchestrator_state 에 pending_sub_agent 저장 후
+              AskUserEvent 를 직접 yield — AgentReturnEvent 없이 종료. 부모가
+              AskUserEvent 를 감지해 해당 턴을 interrupted 처리한다.
+            - "abort"(병렬): 사용자에게 묻지 않고 이 작업만 '입력 필요' 에러 요약의
+              AgentReturnEvent 로 변환해 종료. orchestrator_state 는 건드리지 않는다.
+        skip_consecutive_guard: True 면 같은-에이전트-연속-호출 가드를 건너뛴다
+            (병렬 배치는 의도된 동시성이라 오탐 방지).
     """
     agent_name = (call.arguments or {}).get("agent_name", "")
     task = (call.arguments or {}).get("task", "")
@@ -804,19 +885,24 @@ async def _dispatch_sub_agent(
         yield AgentReturnEvent(
             from_agent=agent_name or "?",
             summary=f"[depth-guard] depth={depth} 초과로 위임 거부",
+            dispatch_id=dispatch_id,
         )
         return
 
-    block_reason = budget.check_dispatch(agent_name)
-    if block_reason:
-        yield AgentReturnEvent(from_agent=agent_name, summary=block_reason)
-        return
+    if not skip_consecutive_guard:
+        block_reason = budget.check_dispatch(agent_name)
+        if block_reason:
+            yield AgentReturnEvent(
+                from_agent=agent_name, summary=block_reason, dispatch_id=dispatch_id
+            )
+            return
 
     agent = agent_registry.get_by_name(agent_name)
     if agent is None:
         yield AgentReturnEvent(
             from_agent=agent_name or "?",
             summary=f"[error] unknown agent: '{agent_name}'",
+            dispatch_id=dispatch_id,
         )
         return
 
@@ -824,7 +910,17 @@ async def _dispatch_sub_agent(
         from_agent=parent_agent_id,
         to_agent=agent.meta.name,
         reason=task[:80],
+        dispatch_id=dispatch_id,
     )
+
+    def _progress(ev: StreamEvent) -> AgentProgressEvent:
+        """서브 raw 이벤트를 dispatch_id 를 실은 AgentProgressEvent 로 래핑한다."""
+        return AgentProgressEvent(
+            agent_id=agent.meta.name,
+            inner_type=ev.type,
+            inner_payload=ev.model_dump(exclude={"type"}),
+            dispatch_id=dispatch_id,
+        )
 
     # 서브 에이전트가 가지고 진입한 SKILL 목록을 progress 채널로 노출.
     # — UI 가 sub-agent 슬롯 안에 어떤 SKILL 이 활성화됐는지 뱃지로 보여줄 수 있다.
@@ -834,6 +930,7 @@ async def _dispatch_sub_agent(
             agent_id=agent.meta.name,
             inner_type="skill_active",
             inner_payload={"skills": [s.meta.name for s in skill_bodies]},
+            dispatch_id=dispatch_id,
         )
 
     # 격리된 system prompt — base + safety + agent body + 학습 SKILL body.
@@ -872,21 +969,13 @@ async def _dispatch_sub_agent(
     ):
         if isinstance(ev, DeltaEvent):
             last_assistant_text.append(ev.content)
-            yield AgentProgressEvent(
-                agent_id=agent.meta.name,
-                inner_type=ev.type,
-                inner_payload=ev.model_dump(exclude={"type"}),
-            )
+            yield _progress(ev)
             continue
 
         if isinstance(ev, ToolResultEvent) and ev.name == COMPLETE_SUB_AGENT:
             # complete_subagent 호출 결과 캡처 — text parsing 대체.
             complete_subagent_summary = ev.result
-            yield AgentProgressEvent(
-                agent_id=agent.meta.name,
-                inner_type=ev.type,
-                inner_payload=ev.model_dump(exclude={"type"}),
-            )
+            yield _progress(ev)
             continue
 
         if isinstance(ev, ToolResultEvent):
@@ -894,33 +983,39 @@ async def _dispatch_sub_agent(
             tool_calls_count += 1
             if ev.is_error:
                 error_count_tracker += 1
-            yield AgentProgressEvent(
-                agent_id=agent.meta.name,
-                inner_type=ev.type,
-                inner_payload=ev.model_dump(exclude={"type"}),
-            )
+            yield _progress(ev)
             continue
 
         if isinstance(ev, (ToolCallEvent, ReasoningEvent)):
-            yield AgentProgressEvent(
-                agent_id=agent.meta.name,
-                inner_type=ev.type,
-                inner_payload=ev.model_dump(exclude={"type"}),
-            )
+            yield _progress(ev)
             continue
 
         if isinstance(ev, (TodoUpdateEvent, SkillCompleteEvent, SkillActiveEvent)):
             # 서브 에이전트의 PLANNER 상태 변화 / SKILL 활성·완료 신호를 프론트에 전달.
             # SkillActiveEvent 는 provider 가 sub-agent context 에서 직접 yield 한 경우
             # — mock 의 복합 시연 시나리오가 이 경로로 sub-skill 뱃지를 갱신한다.
-            yield AgentProgressEvent(
-                agent_id=agent.meta.name,
-                inner_type=ev.type,
-                inner_payload=ev.model_dump(exclude={"type"}),
-            )
+            yield _progress(ev)
             continue
 
         if isinstance(ev, AskUserEvent):
+            if ask_user_mode == "abort":
+                # 병렬 실행 중 — 사용자에게 직접 묻지 않고 이 작업만 종료한다.
+                q = (ev.question or "").strip()
+                yield AgentReturnEvent(
+                    from_agent=agent.meta.name,
+                    summary=(
+                        f"[중단] '{agent.meta.name}' 가 사용자 입력이 필요해 완료하지 "
+                        "못했습니다"
+                        + (f": {q}" if q else "")
+                        + ". 이 작업은 call_sub_agent 로 순차 재위임해 사용자에게 "
+                        "질문하세요."
+                    ),
+                    todo_log=list(sub_state.todo_list),
+                    tool_calls_count=tool_calls_count,
+                    error_count=error_count_tracker,
+                    dispatch_id=dispatch_id,
+                )
+                return
             # 슬롯 부족 또는 ask_user 능동 호출 — orchestrator 에 pending 저장 후 사용자에게 직접 질문.
             if orchestrator_state is not None:
                 orchestrator_state.pending_sub_agent = agent.meta.name
@@ -938,6 +1033,7 @@ async def _dispatch_sub_agent(
             yield AgentReturnEvent(
                 from_agent=agent.meta.name,
                 summary=f"[error] {agent.meta.name}: {ev.message}",
+                dispatch_id=dispatch_id,
             )
             return
 
@@ -952,7 +1048,126 @@ async def _dispatch_sub_agent(
         todo_log=list(sub_state.todo_list),
         tool_calls_count=tool_calls_count,
         error_count=error_count_tracker,
+        dispatch_id=dispatch_id,
     )
+
+
+# ---------------------------------------------------------------------------
+# 병렬 서브 에이전트 디스패치
+# ---------------------------------------------------------------------------
+
+
+async def _dispatch_parallel_sub_agents(
+    *,
+    call: ToolCall,
+    parent_agent_id: str,
+    agent_registry: AgentRegistry,
+    skill_registry: SkillRegistry,
+    prompt_registry: PromptRegistry,
+    registry: ToolRegistry,
+    provider,
+    budget: TurnBudget,
+    depth: int,
+    max_iterations: int,
+    orchestrator_state: AgentState | None,
+    max_parallel: int,
+    result_holder: dict[str, str],
+) -> AsyncIterator[StreamEvent]:
+    """여러 서브 에이전트를 동시에 실행하고 이벤트를 fan-in 으로 병합 yield 한다.
+
+    각 task 는 격리된 `_dispatch_sub_agent` 로 실행되며, ask_user 가 발생하면 그
+    작업만 에러 요약으로 종료된다(ask_user_mode="abort"). 전원 완료 후 입력 순서대로
+    요약을 합쳐 `result_holder["combined"]` 에 단일 텍스트로 채운다 — 호출부가 이를
+    하나의 tool_result 로 사용한다 (call ↔ tool_result 1:1 쌍 유지).
+
+    동시성은 `asyncio.Semaphore(max_parallel)` 로 제한한다. 소비 루프가 취소되면
+    (ESC·탭 종료) finally 가 모든 producer task 를 취소·정리해 고아 task 를 남기지 않는다.
+
+    Args:
+        call: 원본 call_sub_agents_parallel ToolCall. id 를 dispatch_id prefix 로 쓴다.
+        depth: 자식 서브 에이전트가 실행될 깊이 (호출부가 depth+1 을 전달).
+        max_parallel: 동시 실행 상한 (APP_MAX_PARALLEL_SUBAGENTS).
+        result_holder: 완료 후 'combined' 키에 통합 요약 텍스트를 채울 out-param.
+    """
+    raw_tasks = (call.arguments or {}).get("tasks") or []
+    # guard 를 이미 통과했으므로 dict 리스트로 가정. 방어적으로 dict 만 취한다.
+    specs: list[tuple[str, str, str]] = []  # (dispatch_id, agent_name, task)
+    for i, item in enumerate(raw_tasks):
+        if not isinstance(item, dict):
+            continue
+        agent_name = str(item.get("agent_name", "")).strip()
+        task = str(item.get("task", "")).strip()
+        specs.append((f"{call.id}::p{i}", agent_name, task))
+
+    if not specs:
+        result_holder["combined"] = "[error] 병렬 위임 작업 목록이 비어 있습니다"
+        return
+
+    sem = asyncio.Semaphore(max(1, max_parallel))
+    queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
+    summaries: dict[str, str] = {}
+
+    async def _produce(dispatch_id: str, agent_name: str, task: str) -> None:
+        """단일 서브 에이전트를 실행하며 이벤트를 큐로 흘려보낸다."""
+        synth_call = ToolCall(
+            id=dispatch_id,
+            name=SUB_AGENT_DISPATCH,
+            arguments={"agent_name": agent_name, "task": task},
+        )
+        try:
+            async with sem:
+                async for ev in _dispatch_sub_agent(
+                    call=synth_call,
+                    parent_agent_id=parent_agent_id,
+                    agent_registry=agent_registry,
+                    skill_registry=skill_registry,
+                    prompt_registry=prompt_registry,
+                    registry=registry,
+                    provider=provider,
+                    budget=budget,
+                    depth=depth,
+                    max_iterations=max_iterations,
+                    orchestrator_state=orchestrator_state,
+                    dispatch_id=dispatch_id,
+                    ask_user_mode="abort",
+                    skip_consecutive_guard=True,
+                ):
+                    await queue.put(("ev", ev))
+                    if isinstance(ev, AgentReturnEvent):
+                        summaries[dispatch_id] = _format_sub_agent_result(ev)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — producer 예외를 트레일 요약으로 흡수
+            logger.exception("parallel sub-agent producer failed: %s", agent_name)
+            summaries[dispatch_id] = f"[error] {agent_name}: {type(exc).__name__}"
+        finally:
+            await queue.put(("done", dispatch_id))
+
+    tasks = [
+        asyncio.create_task(_produce(did, name, task)) for did, name, task in specs
+    ]
+
+    try:
+        remaining = len(tasks)
+        while remaining > 0:
+            kind, payload = await queue.get()
+            if kind == "ev":
+                yield payload
+            else:  # "done"
+                remaining -= 1
+    finally:
+        for t in tasks:
+            if not t.done():
+                t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    # 입력(task) 순서대로 요약을 합쳐 단일 tool_result 본문을 구성한다.
+    blocks: list[str] = []
+    total = len(specs)
+    for idx, (did, agent_name, _task) in enumerate(specs, start=1):
+        body = summaries.get(did) or f"[{agent_name}] (요약 없음)"
+        blocks.append(f"### 병렬 작업 {idx}/{total} — {agent_name}\n{body}")
+    result_holder["combined"] = "\n\n".join(blocks)
 
 
 # ---------------------------------------------------------------------------
@@ -1198,7 +1413,8 @@ def _filter_specs_for_sub_agent(
     """서브 에이전트에게 노출할 도구 스펙.
 
     금지 도구:
-        - SUB_AGENT_DISPATCH: 무한 재귀 방지 (depth-guard 가 2차 안전망).
+        - SUB_AGENT_DISPATCH / SUB_AGENTS_PARALLEL_DISPATCH: 무한 재귀 방지
+          (depth-guard 가 2차 안전망). 서브 에이전트는 순차·병렬 위임 모두 금지.
     허용 도구:
         - COMPLETE_SUB_AGENT: 서브 에이전트가 완료 시 반드시 호출해야 함.
         - PLANNER_ADD_TODO / PLANNER_COMPLETE_TODO: 서브 에이전트도 자체 작업을
@@ -1213,7 +1429,9 @@ def _filter_specs_for_sub_agent(
           명시하지 않아도 LLM 이 자체 plan 으로 call_function/eval_expression 등을
           호출 가능.
     """
-    forbidden: frozenset[str] = frozenset({SUB_AGENT_DISPATCH})
+    forbidden: frozenset[str] = frozenset(
+        {SUB_AGENT_DISPATCH, SUB_AGENTS_PARALLEL_DISPATCH}
+    )
     allowed = set(agent.meta.tools)
 
     needs_runtime = bool(agent.meta.api_refs) or (

@@ -221,6 +221,9 @@ class AgentSwitchEvent(BaseModel):
     ]
     to_agent: Annotated[str, "새로 활성화될 에이전트 이름"]
     reason: Annotated[str, "위임 사유 — task 의 첫 80자 발췌"]
+    # 디스패치별 고유 상관키 — 병렬 실행 시 같은 이름 에이전트가 둘 이상 동시에 떠도
+    # 프론트가 이벤트를 정확한 트레일로 라우팅하게 한다. 순차 위임은 call.id 를 그대로 채운다.
+    dispatch_id: Annotated[str | None, "디스패치 상관키 (병렬 라우팅용)"] = None
 
 
 class AgentReturnEvent(BaseModel):
@@ -238,6 +241,8 @@ class AgentReturnEvent(BaseModel):
     ] = Field(default_factory=list)
     tool_calls_count: Annotated[int, "서브 에이전트가 실행한 도구 호출 총 수"] = 0
     error_count: Annotated[int, "is_error=True 였던 도구 호출 수"] = 0
+    # AgentSwitchEvent 와 짝을 이루는 디스패치 상관키 — 병렬 라우팅용.
+    dispatch_id: Annotated[str | None, "디스패치 상관키 (병렬 라우팅용)"] = None
 
 
 class SkillCompleteEvent(BaseModel):
@@ -269,6 +274,8 @@ class AgentProgressEvent(BaseModel):
     inner_payload: Annotated[
         dict[str, Any], "원본 이벤트의 type 을 제외한 model_dump 결과"
     ]
+    # AgentSwitchEvent 와 짝을 이루는 디스패치 상관키 — 병렬 라우팅용.
+    dispatch_id: Annotated[str | None, "디스패치 상관키 (병렬 라우팅용)"] = None
 
 
 StreamEvent = Annotated[

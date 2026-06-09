@@ -179,6 +179,19 @@ type Session = {
 - `marked` + `DOMPurify` (XSS 방어) + `highlight.js` (코드 펜스)
 - 테마 전환 시 `:root` / `[data-theme="dark"]` CSS 변수로 hljs 스타일 분기
 
+## 서브에이전트 트레일 라우팅 (병렬 지원)
+
+`chatActions.svelte.js` 가 `agent:switch` 수신 시 `subagent` 세그먼트를 push 하고,
+`agent:progress`/`agent:return` 은 해당 트레일을 찾아 내부 segments 를 채우거나 done 으로 닫는다.
+
+- `agent:switch` 세그먼트에 `dispatchId: ev.dispatch_id ?? null` 을 저장한다.
+- 라우팅은 `_findSubagentForEvent(segments, ev)` 가 담당: **`ev.dispatch_id` 가 있으면 그
+  상관키로 정확히 매칭**(병렬·같은 이름 동시 실행에도 충돌 없음), 없으면(구 세션·순차 폴백)
+  `agentId` 기반 '마지막 running' 휴리스틱(`_findLastRunningSubagent`)으로 되돌아간다.
+- 병렬(`call_sub_agents_parallel`)이면 한 메시지에 여러 `subagent` 세그먼트가 동시에 running
+  상태로 쌓여 인터리브 진행된다. `call_sub_agents_parallel` 은 `_SENTINEL_TOOL_NAMES` 에
+  포함돼 도구 카드로 중복 렌더되지 않는다.
+
 ## 생성 진행 상태 (TurnStatus)
 
 `TurnStatus.svelte`는 assistant 메시지 버블 안, 세그먼트 타임라인 바로 뒤에 렌더된다.

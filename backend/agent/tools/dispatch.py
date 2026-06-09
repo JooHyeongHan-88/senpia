@@ -1,19 +1,30 @@
 """Sub-agent 위임 · 종료 sentinel 도구.
 
-call_sub_agent  — 오케스트레이터가 서브 에이전트에게 작업을 위임한다.
-complete_subagent — 서브 에이전트가 작업을 마쳤을 때 결과를 오케스트레이터에 반환한다.
+call_sub_agent          — 오케스트레이터가 서브 에이전트에게 작업을 순차 위임한다.
+call_sub_agents_parallel — 오케스트레이터가 독립 작업들을 여러 서브 에이전트에 동시 위임한다.
+complete_subagent       — 서브 에이전트가 작업을 마쳤을 때 결과를 오케스트레이터에 반환한다.
 
-두 도구 모두 harness 가 tool_call 단계에서 직접 처리하므로 함수 본문은 실행되지 않는다.
+세 도구 모두 harness 가 tool_call 단계에서 직접 처리하므로 함수 본문은 실행되지 않는다.
 """
 
 from typing import Annotated
+
+from pydantic import BaseModel
 
 from agent.registries.tools import (
     ACTIVATE_SKILL,
     COMPLETE_SUB_AGENT,
     SUB_AGENT_DISPATCH,
+    SUB_AGENTS_PARALLEL_DISPATCH,
     register_tool,
 )
+
+
+class ParallelTask(BaseModel):
+    """call_sub_agents_parallel 의 단일 위임 항목 (agent_name + task)."""
+
+    agent_name: Annotated[str, "위임할 서브 에이전트 식별자 (예: analyst_agent)"]
+    task: Annotated[str, "그 에이전트가 수행할 작업 지시문 (한국어 한 단락)"]
 
 
 @register_tool(
@@ -38,6 +49,32 @@ from agent.registries.tools import (
 async def call_sub_agent(
     agent_name: Annotated[str, "위임할 서브 에이전트 식별자 (예: coding_agent)"],
     task: Annotated[str, "에이전트가 수행할 작업 지시문 (한국어 한 단락)"],
+) -> str:
+    raise RuntimeError("sentinel tool — handled by harness, never executed")
+
+
+@register_tool(
+    name=SUB_AGENTS_PARALLEL_DISPATCH,
+    description=(
+        "여러 서브 에이전트를 동시에(병렬) 실행한다. "
+        "When to use: 작업들이 서로 독립적이고(한쪽 결과가 다른 쪽 입력이 아님) "
+        "각자 완결적으로 지시 가능할 때. tasks 의 각 항목이 한 에이전트 turn 으로 동시 실행되고, "
+        "전원 완료 후 결과 요약본이 하나의 tool_result 로 합쳐져 반환된다. "
+        "When NOT to use: 작업에 순서/의존성이 있을 때(예: 분석→보고서는 call_sub_agent 로 순차 위임), "
+        "또는 위임할 작업이 하나뿐일 때(call_sub_agent 사용). "
+        "주의: 병렬 작업 도중 어떤 에이전트가 사용자 추가 입력이 필요해지면 그 작업만 "
+        "'입력 필요'로 종료되어 결과에 보고된다 — 그 작업은 이후 call_sub_agent 로 순차 재위임하라."
+    ),
+    slot_prompts={
+        "tasks": "병렬로 실행할 (agent_name, task) 목록을 알려주세요.",
+    },
+    sentinel=True,
+)
+async def call_sub_agents_parallel(
+    tasks: Annotated[
+        list[ParallelTask],
+        "동시 실행할 위임 작업 목록. 각 항목: {agent_name, task}.",
+    ],
 ) -> str:
     raise RuntimeError("sentinel tool — handled by harness, never executed")
 

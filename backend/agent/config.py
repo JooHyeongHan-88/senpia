@@ -67,6 +67,11 @@ MAX_AGENT_CALLS_PER_TURN: int = int(
     os.environ.get("APP_MAX_AGENT_CALLS_PER_TURN", "20")
 )
 
+# 한 번의 call_sub_agents_parallel 에서 동시에 실행할 서브 에이전트 수 상한.
+# asyncio.Semaphore 로 강제 — 무제한 동시 실행에 따른 자원 폭주(provider 동시 호출·
+# 메모리)를 막는다. 상한을 넘는 task 는 슬롯이 빌 때까지 대기한다(취소 아님).
+MAX_PARALLEL_SUBAGENTS: int = int(os.environ.get("APP_MAX_PARALLEL_SUBAGENTS", "3"))
+
 # 서브 에이전트 호출 깊이 상한. 0=orchestrator, 1=sub-agent. 2 이상은 거부.
 MAX_AGENT_DEPTH: int = int(os.environ.get("APP_MAX_AGENT_DEPTH", "1"))
 if MAX_AGENT_DEPTH > 1:
