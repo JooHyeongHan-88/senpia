@@ -17,6 +17,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import agent.tools.artifact as artifact_module  # noqa: E402
+import agent.tools.runtime as runtime_tools  # noqa: E402
 from agent import harness  # noqa: E402
 from agent.runtime import namespace as ns_module  # noqa: E402
 from core import result_store  # noqa: E402
@@ -132,6 +133,65 @@ def test_read_manifest_scan_fallback_without_manifest() -> None:
     entries = result_store.read_manifest_entries(cid, limit=10)
     assert len(entries) == 1
     assert entries[0]["path"].endswith("orphan.md")
+
+
+# ---------------------------------------------------------------------------
+# exec_code 의 artifact_dir() 직접 쓰기 — manifest 자동 동기화
+# ---------------------------------------------------------------------------
+
+
+def _exec(code: str):
+    return asyncio.run(runtime_tools.exec_code(code=code))
+
+
+def test_exec_code_artifact_dir_files_recorded_in_manifest() -> None:
+    """exec_code 가 artifact_dir() 로 직접 쓴 파일도 manifest 에 등록된다.
+
+    save_artifact 만 manifest 를 쓰던 시절, exec_code 직접 쓰기 산출물(parquet 등)
+    은 다음 턴 'Session Artifacts' 섹션에 보이지 않아 LLM 이 경로를 추측하다
+    실패했다.
+    """
+    cid = _bind()
+    result = _exec(
+        "out = artifact_dir() / 'direct.txt'\n"
+        "out.write_text('hello', encoding='utf-8')\n"
+        "saved = str(out)\n"
+    )
+    assert result.is_error is False, result.content
+
+    entries = result_store.read_manifest_entries(cid, limit=10)
+    assert len(entries) == 1
+    assert entries[0]["path"].endswith("direct.txt")
+    assert entries[0]["kind"] == "txt"
+    assert entries[0]["description"] == "exec_code 생성"
+
+
+def test_exec_code_does_not_rerecord_save_artifact_files() -> None:
+    """같은 턴에 save_artifact 가 먼저 만든 파일은 diff 에서 제외 — 중복 기록 없음.
+
+    production 의 단일 run_turn 처럼 두 도구를 한 코루틴에서 실행해야 turn_slot
+    contextvars 캐시가 공유된다 (별도 asyncio.run 은 컨텍스트가 끊긴다).
+    """
+    cid = _bind()
+
+    async def scenario():
+        save_result = await artifact_module.save_artifact(
+            filename="a.md", kind="markdown", content="x", description="먼저"
+        )
+        exec_result = await runtime_tools.exec_code(
+            code="p = artifact_dir() / 'b.txt'\np.write_text('y', encoding='utf-8')\n"
+        )
+        return save_result, exec_result
+
+    save_result, exec_result = asyncio.run(scenario())
+    assert save_result.is_error is False, save_result.content
+    assert exec_result.is_error is False, exec_result.content
+
+    entries = result_store.read_manifest_entries(cid, limit=10)
+    paths = [e["path"] for e in entries]
+    assert len(entries) == 2, paths
+    assert any(p.endswith("a.md") for p in paths)
+    assert any(p.endswith("b.txt") for p in paths)
 
 
 # ---------------------------------------------------------------------------

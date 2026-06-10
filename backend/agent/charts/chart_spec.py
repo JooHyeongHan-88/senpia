@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 EncodingType = Literal["quantitative", "nominal", "temporal"]
 MarkType = Literal["bar", "line", "scatter", "box", "histogram", "heatmap", "ecdf"]
@@ -73,6 +73,18 @@ class ChartV1(BaseModel):
         dict[str, Any] | None,
         "ECharts option 추가 필드 (기본 option 에 deep-merge). 선택 사항.",
     ] = None
+
+    @model_validator(mode="after")
+    def _default_histogram_bin(self) -> ChartV1:
+        """histogram 의 ``x.bin`` 누락을 에러 대신 자동 보정한다.
+
+        bin=True 는 histogram 의 무조건적 필수값이라 정보 손실이 없다 — LLM 이
+        스키마 세부를 몰라도 첫 시도에 렌더되도록 관용적으로 처리한다.
+        x.type 등 의미가 걸린 조건은 렌더러 검증에 그대로 맡긴다.
+        """
+        if self.mark == "histogram" and self.encoding.x is not None:
+            self.encoding.x.bin = True
+        return self
 
 
 class ChartSpecV1(BaseModel):

@@ -180,7 +180,7 @@ run_turn(client_id, user_message, *, agent_registry, force_skills=None, ...)
 
 ### 세션 manifest + Session Artifacts 프롬프트 섹션
 
-`save_artifact` 성공 시 세션 루트의 `_artifacts.jsonl` 에 한 줄 append (`append_manifest_entry`, OSError 는 삼킴). `run_turn` 의 시스템 프롬프트 합성이 `_render_session_artifacts_section` 으로 최근 N개(기본 10) 산출물을 `# Session Artifacts` 섹션으로 주입한다 (manifest 우선, 없으면 디스크 스캔 fallback). **세션 복원이 tool 메시지를 버려도**(OpenAI 와이어 규약상 고아 tool 메시지 복원 불가) 디스크 manifest 가 진실원천이라 과거 산출물 재발견이 끊기지 않는다.
+`save_artifact` 성공 시 세션 루트의 `_artifacts.jsonl` 에 한 줄 append (`append_manifest_entry`, OSError 는 삼킴). `exec_code` 가 `artifact_dir()` 로 직접 쓴 파일도 실행 전/후 슬롯 diff 로 자동 등록된다 (`_register_new_slot_artifacts` — save_artifact 선행분·파생물 `DERIVED_ARTIFACT_FILENAMES` 제외, → harness_resilience.md R6). `run_turn` 의 시스템 프롬프트 합성이 `_render_session_artifacts_section` 으로 최근 N개(기본 10) 산출물을 `# Session Artifacts` 섹션으로 주입한다 (manifest 우선, 없으면 디스크 스캔 fallback). **세션 복원이 tool 메시지를 버려도**(OpenAI 와이어 규약상 고아 tool 메시지 복원 불가) 디스크 manifest 가 진실원천이라 과거 산출물 재발견이 끊기지 않는다.
 
 ### namespace LRU spill (휘발성 완화)
 

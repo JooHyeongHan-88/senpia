@@ -141,6 +141,58 @@ run_turn 미진입, `ErrorEvent("이미 응답을 생성 중...") + DoneEvent` 2
 
 ---
 
+## 루프 가드 파일 fingerprint (`backend/agent/harness.py`, R4)
+
+루프 가드 시그니처는 `_call_signature(call)` = `(name, sort_keys args JSON, 참조 파일
+fingerprint)` 3-튜플이다. 인자 트리를 재귀 순회하며 `result/` 로 시작하는 문자열을
+`resolve_result_path` 로 해석해 `경로:mtime_ns:size` 를 fingerprint 에 포함한다.
+
+- **이유**: `(name, args)` 만 비교하면 "spec 파일을 고쳐 쓴 뒤 같은 경로로 재호출"
+  (정당한 재시도 — 실 LLM 의 display_chart 수정 루프)을 루프로 오인 차단한다.
+  fingerprint 포함으로 **관측 가능한 상태가 그대로인 진짜 반복만** 차단된다.
+- 미존재 경로·일반 문자열은 fingerprint 에 기여하지 않는다 (조용히 skip).
+- 정상 실행 경로와 `_record_invalid_call`(형식오류 경로)이 같은 `history_calls`
+  집합과 같은 시그니처 헬퍼를 공유한다 — 한쪽만 바꾸지 말 것.
+
+테스트: `backend/tests/test_harness_loop_guard.py`
+
+---
+
+## 턴 시작 terminal todo 리셋 (`backend/agent/harness.py`, R5)
+
+`run_turn()` 이 state 로드 직후, `todo_list` 가 비어있지 않고 **전원 terminal**
+(`_TERMINAL_STATUSES` = completed/failed/skipped)이면 리스트를 비운다.
+
+- **이유**: `_handle_add_todo` 는 append 만 하므로 리셋이 없으면 이전 턴의 완료
+  todo 가 새 턴의 TodoUpdateEvent 에 실려 '작업 진행' 패널에 누적 표시되고,
+  `# 현재 To-do` 시스템 프롬프트 섹션을 매 턴 오염시킨다.
+- 비-terminal todo 가 하나라도 있으면 보존 — AskUser 등 턴 경계를 넘는 plan 연속
+  흐름을 깨지 않는다.
+- 프론트 변경 불필요: TodoUpdateEvent 는 전체 스냅샷, 패널은 메시지 단위 교체.
+  이전 메시지의 완료 todo 표시는 그대로 남는다 (의도된 이력).
+
+테스트: `backend/tests/test_harness_todo_reset.py`
+
+---
+
+## exec_code 산출물 manifest 동기화 (`backend/agent/tools/runtime.py`, R6)
+
+`exec_code` 가 `artifact_dir()` 로 직접 쓴 파일은 save_artifact 를 거치지 않아
+manifest(`_artifacts.jsonl`)에 기록되지 않았다 → 다음 턴 `# Session Artifacts`
+섹션에서 보이지 않아 LLM 이 과거 parquet 경로를 추측하다 실패했다.
+
+- 실행 **전** 슬롯 파일명 스냅샷(`_snapshot_slot_files`) → 실행 후 diff 로 신규
+  파일만 `append_manifest_entry` (`_register_new_slot_artifacts`, best-effort).
+- 같은 턴에 save_artifact 가 먼저 만든 파일은 스냅샷에 포함되므로 중복 기록 없음.
+- 파생물(`DERIVED_ARTIFACT_FILENAMES` — charts.json 등)은 제외. 이 상수는
+  `core/result_store.py` 에서 디스크 스캔 fallback 과 공유한다.
+- 보조 장치: `display_chart` 의 data.source 미발견 에러에 세션 manifest 의 실존
+  parquet 후보 목록을 덧붙인다 (`visualize._session_parquet_hint`).
+
+테스트: `backend/tests/test_artifact_manifest.py` (exec_code 섹션)
+
+---
+
 ## 에러 메시지 안전화 (F12)
 
 - `run_turn()` 최상위 `except Exception`: `str(exc)` → `f"[{type(exc).__name__}] 처리 중 오류가 발생했습니다."` — API 키·URL 노출 방지.

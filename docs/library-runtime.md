@@ -100,7 +100,7 @@ stdlib 안전 목록의 정확한 멤버는 `backend/agent/runtime/evaluator.py`
 ```
 
 - `store_as` 는 Python identifier 형식 (`df`, `df_clean`, `stats`).
-- `kwargs` 값에 `"$varname"` 형태 문자열이 있고 namespace 에 같은 이름 변수가 있으면 그 값으로 자동 치환된다 (객체 체이닝).
+- `kwargs` 값에 `"$varname"` 형태 문자열이 있고 namespace 에 같은 이름 변수가 있으면 그 값으로 자동 치환된다 (객체 체이닝). 중첩 dict/list 내부 값(예: `{"data": {"values": "$df"}}`)까지 재귀 치환된다.
 - 동기/async 함수 모두 지원 (sync 는 `run_in_executor` 로 event loop 비차단).
 
 ### `eval_expression(expression, store_as="")`

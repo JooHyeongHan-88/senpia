@@ -457,5 +457,58 @@ def test_exec_code_then_save_artifact_share_folder() -> None:
     _with_tmp_result_dir(body)
 
 
+# ---------------------------------------------------------------------------
+# $var 참조 치환 — 중첩 구조 (실 LLM 이 중첩 인자로 참조를 넘기는 회귀 케이스)
+# ---------------------------------------------------------------------------
+
+
+def test_call_function_resolves_nested_refs() -> None:
+    """중첩 dict/list 내부의 '$var' 도 실제 값으로 치환된다.
+
+    top-level 만 치환하던 시절, {"data": {"values": "$df"}} 의 내부 참조가
+    literal 문자열로 전달되어 라이브러리가 원인 불명의 타입 에러를 냈다.
+    """
+    _setup()
+    cid = _bind_session()
+    try:
+        ns = namespace.get_namespace(cid, "test-session")
+        ns.store("xs", [1, 2, 3])
+
+        result = asyncio.run(
+            _call(
+                "call_function",
+                qualified_name="json.dumps",
+                kwargs={"obj": {"values": "$xs", "meta": ["$xs", "literal"]}},
+                store_as="doc",
+            )
+        )
+        assert result.is_error is False, result.content
+        loaded = ns.load("doc")
+        assert '"values": [1, 2, 3]' in loaded
+        assert '[[1, 2, 3], "literal"]' in loaded
+    finally:
+        namespace.cleanup_namespace(cid)
+
+
+def test_call_function_keeps_unknown_ref_literal() -> None:
+    """namespace 에 없는 '$x' 는 중첩 위치에서도 원문 그대로 유지된다."""
+    _setup()
+    cid = _bind_session()
+    try:
+        ns = namespace.get_namespace(cid, "test-session")
+        result = asyncio.run(
+            _call(
+                "call_function",
+                qualified_name="json.dumps",
+                kwargs={"obj": {"raw": "$nope"}},
+                store_as="doc",
+            )
+        )
+        assert result.is_error is False, result.content
+        assert '"$nope"' in ns.load("doc")
+    finally:
+        namespace.cleanup_namespace(cid)
+
+
 if __name__ == "__main__":
     run_tests(globals())

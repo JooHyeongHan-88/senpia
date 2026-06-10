@@ -49,6 +49,11 @@ _TITLE_MAX_LEN = 30
 _RESULT_PREFIX = "result/"
 # 세션 산출물 목록(manifest). 세션 루트(타임스탬프 폴더의 형제)에 위치한다.
 _MANIFEST_FILENAME = "_artifacts.jsonl"
+# 파생 산출물 — 원본(spec·parquet)에서 재생성 가능하므로 manifest·스캔 목록에서 제외.
+# 디스크 스캔 fallback 과 exec_code 의 신규 파일 diff 가 같은 기준을 공유한다.
+DERIVED_ARTIFACT_FILENAMES: frozenset[str] = frozenset(
+    {"charts.json", "charts.filter.json", _MANIFEST_FILENAME}
+)
 
 
 # ---------------------------------------------------------------------------
@@ -271,7 +276,7 @@ def _scan_disk_artifacts(client_id: str) -> list[dict[str, Any]]:
     파생물(charts.json 등)·내부 폴더(_namespace)·manifest 파일 자신은 제외하며,
     parquet 메타데이터는 읽지 않는다 (비용 통제 — list_artifacts 가 필요 시 읽음).
     """
-    derived = {"charts.json", "charts.filter.json", _MANIFEST_FILENAME}
+    derived = DERIVED_ARTIFACT_FILENAMES
     ts_pattern = re.compile(r"^\d{8}-\d{6}$")
     scanned: list[dict[str, Any]] = []
     for sdir in iter_session_dirs(client_id):

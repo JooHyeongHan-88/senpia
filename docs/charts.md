@@ -93,7 +93,7 @@
 
 ### 유형별 주의점
 
-- **histogram**: x 채널에 반드시 `"bin": true` + `"type": "quantitative"`. y 채널은 불필요(자동 count).
+- **histogram**: x 채널은 `"type": "quantitative"`. `"bin": true` 는 spec 검증 시 자동 보정되므로 생략 가능. y 채널은 불필요(자동 count).
 - **ecdf**: x(quantitative) **하나만** 지정. y 를 넣지 말 것. 내부에서 x 오름차순 정렬 후 `i/n` 누적비율을 계단선(`step:"end"`)으로 그린다. `color` 를 주면 그룹별 곡선을 겹쳐 비교한다.
 - **box**: x 또는 color 를 주면 그룹별 박스 묶음. 둘 다 없으면 전체를 단일 박스로.
 - **heatmap**: color.type 은 반드시 `quantitative`(셀 값). x·y 는 nominal 범주.
@@ -246,9 +246,9 @@ brush 필터는 **점이 원본 행과 1:1 대응**할 때만 의미가 있다. 
 - ❌ `series.data` 에 좌표를 인라인으로 넣음 → **지원 안 함.** parquet + spec 으로 분리.
 - ❌ `display_chart(source=...)` 에 parquet 경로를 넘김 → `.spec.json` 파일 경로를 넘겨야 한다.
 - ❌ ecdf 에 y 채널을 지정 → y 불필요. x(quantitative)만.
-- ❌ histogram 에 `bin:true` 누락 → "histogram 은 x.bin=true 가 필요하다" 에러.
+- ✅ histogram 의 `bin:true` 누락 → ChartV1 validator 가 자동 보정 (에러 아님).
 - ❌ heatmap 의 color.type 을 nominal 로 → color 는 `quantitative` 여야 셀 값이 된다.
-- ❌ spec 을 저장하기 전에 parquet 을 안 만듦 → 렌더 시 "parquet 파일을 찾을 수 없다".
+- ❌ spec 을 저장하기 전에 parquet 을 안 만듦 → 렌더 시 "parquet 파일을 찾을 수 없다" + 세션 내 실존 parquet 후보 목록이 함께 안내된다.
 - ✅ bar·box 에서 brush 점 필터가 안 된다고 당황하지 말 것 — **설계상 집계 차트는 점 필터 비대상**(Filter All 의 교차 재집계는 받음).
 - ❌ Legend 버튼이 비활성 → `encoding.color` 채널이 없거나 그룹(시리즈)이 1개 이하. `color.field` 가 있고 데이터에 실제로 2종 이상의 값이 있어야 활성화된다.
 - ❌ heatmap 의 `color` 를 레전드 컨트롤에 쓰려 함 → heatmap 의 color 는 셀 수치값(`quantitative`)이라 시리즈 분할이 아님. 레전드 컨트롤 비대상.

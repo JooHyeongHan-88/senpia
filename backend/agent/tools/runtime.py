@@ -17,7 +17,7 @@ Agent 가 동적으로 호출할 수 있도록 다음 도구를 제공한다:
     - ``call_function`` 의 kwargs 값에 ``"$var"`` 형태 문자열이 있고
       namespace 에 같은 이름 변수가 있으면 자동으로 값으로 치환된다 — 객체
       체이닝(DataFrame → 다음 함수 인자) 시 LLM 이 raw 값을 다시 직렬화할
-      필요 없게 한다.
+      필요 없게 한다. 중첩 dict/list 내부 값까지 재귀 치환된다.
     - 라이브러리 화이트리스트는 ``agent.runtime.resolver`` 가 일괄 적용.
 """
 
@@ -33,11 +33,14 @@ from agent.models import ToolResult
 from agent.registries.tools import register_tool
 from agent.runtime import evaluator, introspect, namespace, resolver
 from core.result_store import (
+    DERIVED_ARTIFACT_FILENAMES,
     adopt_turn_slot,
+    append_manifest_entry,
     artifact_slot,
     current_client_id,
     current_session_title,
     peek_turn_slot,
+    to_result_relative,
 )
 
 logger = logging.getLogger(__name__)
@@ -98,10 +101,42 @@ class _ArtifactDirProvider:
         self.created = artifact_slot(self._client_id, self._session_title)
         return self.created
 
+    @property
+    def used_slot(self) -> Path | None:
+        """이번 실행에서 산출물 폴더로 쓰였을 수 있는 슬롯 — 기존 캐시 우선."""
+        return self._existing if self._existing is not None else self.created
+
 
 # ---------------------------------------------------------------------------
 # 공통 헬퍼
 # ---------------------------------------------------------------------------
+
+
+def _resolve_ref_value(value: Any, ns: namespace.SessionNamespace) -> Any:
+    """단일 인자 값의 ``"$varname"`` 참조를 재귀적으로 실제 값으로 치환한다.
+
+    LLM 이 ``{"data": {"values": "$df"}}`` 처럼 중첩 구조 안에 참조를 넣는
+    경우가 흔하다 — top-level 만 치환하면 내부 문자열이 literal 로 전달되어
+    라이브러리가 원인 불명의 타입 에러를 일으킨다. dict 키는 JSON 특성상
+    항상 문자열이므로 치환 대상이 아니다.
+
+    Args:
+        value: kwargs 트리의 한 노드 (str/dict/list/스칼라).
+        ns: 현재 세션 namespace.
+
+    Returns:
+        참조가 해소된 값. namespace 에 없는 ``$x`` 는 원문 그대로 유지.
+    """
+    if isinstance(value, str) and value.startswith("$") and len(value) > 1:
+        ref = value[1:]
+        if ns.has(ref):
+            return ns.load(ref)
+        return value
+    if isinstance(value, dict):
+        return {key: _resolve_ref_value(item, ns) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_resolve_ref_value(item, ns) for item in value]
+    return value
 
 
 def _resolve_kwargs_refs(
@@ -110,17 +145,59 @@ def _resolve_kwargs_refs(
     """kwargs 값 중 ``"$varname"`` 형태가 namespace 에 있으면 실제 값으로 치환한다.
 
     LLM 이 객체(DataFrame 등)를 다음 함수 인자로 넘기는 표준 관용구.
-    충돌은 namespace 에 같은 이름이 등록된 경우에만 발생하므로 사실상 안전.
+    중첩 dict/list 내부 값까지 재귀 치환한다. 충돌은 namespace 에 같은
+    이름이 등록된 경우에만 발생하므로 사실상 안전.
     """
-    resolved: dict[str, Any] = {}
-    for key, value in kwargs.items():
-        if isinstance(value, str) and value.startswith("$") and len(value) > 1:
-            ref = value[1:]
-            if ns.has(ref):
-                resolved[key] = ns.load(ref)
-                continue
-        resolved[key] = value
-    return resolved
+    return {key: _resolve_ref_value(value, ns) for key, value in kwargs.items()}
+
+
+def _snapshot_slot_files(slot: Path | None) -> frozenset[str]:
+    """슬롯 폴더의 현재 파일명 집합 — exec_code 실행 전/후 diff 의 기준선."""
+    if slot is None or not slot.exists():
+        return frozenset()
+    return frozenset(f.name for f in slot.iterdir() if f.is_file())
+
+
+def _register_new_slot_artifacts(
+    slot: Path | None, pre_existing: frozenset[str]
+) -> None:
+    """exec_code 가 artifact_dir() 로 직접 쓴 신규 파일을 세션 manifest 에 등록한다.
+
+    save_artifact 를 거치지 않은 파일은 manifest 에 기록되지 않아 다음 턴의
+    'Session Artifacts' 프롬프트 섹션에서 재발견이 끊긴다 — 그러면 LLM 이 과거
+    parquet 경로를 추측하다 실패한다. 실행 전 스냅샷과의 diff 로 메꾼다.
+    기록 실패가 exec_code 본체를 실패시키면 안 되므로 best-effort.
+
+    Args:
+        slot: 이번 실행에서 쓰인 턴 슬롯 (미사용이면 None).
+        pre_existing: 실행 전 슬롯에 이미 있던 파일명 집합.
+    """
+    if slot is None or not slot.exists():
+        return
+    for file in sorted(slot.iterdir()):
+        if not file.is_file() or file.name in pre_existing:
+            continue
+        if file.name in DERIVED_ARTIFACT_FILENAMES:
+            continue
+        try:
+            relative_path = to_result_relative(file)
+        except ValueError:
+            # 슬롯이 RESULT_DIR 밖인 비정상 상황 — manifest 만 건너뛴다.
+            logger.warning("manifest 등록 건너뜀 (RESULT_DIR 밖): %s", file)
+            continue
+        try:
+            size = file.stat().st_size
+        except OSError:
+            size = 0
+        append_manifest_entry(
+            {
+                "ts": slot.name,
+                "path": relative_path,
+                "kind": file.suffix.lstrip("."),
+                "size": size,
+                "description": "exec_code 생성",
+            }
+        )
 
 
 def _format_variable_summary(value: Any, *, max_rows: int = 5) -> str:
@@ -304,6 +381,7 @@ async def list_module_members(
         "eval_expression('df.max()') 또는 describe_variable(name='df'). "
         "kwargs 값에 '$varname' 문자열이 있고 namespace 에 같은 이름 변수가 있으면 "
         "자동으로 그 값으로 치환된다 (DataFrame 등 객체 체이닝용). "
+        "중첩 dict/list 내부의 '$varname' 값도 재귀 치환된다. "
         "store_as 는 Python identifier 형식이어야 한다."
     ),
     slot_prompts={
@@ -484,8 +562,9 @@ async def eval_expression(
         "다중 statement Python 코드를 namespace 환경에서 실행한다. "
         "When to use: import + 변수 할당 + for 루프 + 함수 정의 등을 한 번에 "
         "수행해야 할 때 (eval_expression 은 식 한 줄만 가능). "
-        '예: \'import pandas as pd\\ndf = pd.read_csv("a.csv")\\n'
+        '예: \'import polars as pl\\ndf = pl.read_csv("a.csv")\\n'
         "stats = df.describe()'. "
+        "DataFrame 작업은 polars 를 우선 사용한다 (pandas 는 polars 로 불가능할 때만). "
         "Restrictions: exec/eval/compile 차단. import 는 stdlib 안전 모듈 + "
         "APP_ALLOWED_LIBRARIES 만 허용. "
         "Returns: stdout 출력 + 새로 추가/변경된 namespace 변수 요약. "
@@ -494,7 +573,8 @@ async def eval_expression(
         "라이브러리가 파일을 직접 써야 할 때 사용하라. 'result/...' 를 open() 으로 직접 열지 말 것 "
         "(frozen EXE CWD 함정). 산출 경로를 후속 단계에 넘기려면 str 로 변수에 담아라: "
         "out = str(artifact_dir() / 'model.pkl'). 'artifact_dir' 은 예약어라 재할당해도 "
-        "namespace 에 저장되지 않는다."
+        "namespace 에 저장되지 않는다. artifact_dir() 아래에 쓴 파일은 세션 manifest 에 "
+        "자동 등록되어 다음 턴에서 'result/...' 경로로 재발견된다."
     ),
     slot_prompts={
         "code": "실행할 Python 코드를 알려주세요 (multi-line 가능).",
@@ -528,6 +608,8 @@ async def exec_code(
     # contextvars 가 executor 로 전파되지 않으므로 provider 가 지금 값을 캡처한다.
     artifact_dir_provider = _ArtifactDirProvider()
     local_scope["artifact_dir"] = artifact_dir_provider
+    # 같은 턴 save_artifact 가 먼저 채운 파일과 구분하기 위한 실행 전 기준선.
+    pre_slot_files = _snapshot_slot_files(artifact_dir_provider.used_slot)
 
     # 블로킹 exec 를 executor 로 — 큰 라이브러리 import 가 event loop 를 잡지 않게.
     try:
@@ -556,6 +638,9 @@ async def exec_code(
                 current_slot,
                 artifact_dir_provider.created,
             )
+
+    # artifact_dir() 로 직접 쓴 파일을 manifest 에 등록 — 다음 턴 재발견 보장.
+    _register_new_slot_artifacts(artifact_dir_provider.used_slot, pre_slot_files)
 
     # 신규 또는 reference 가 바뀐 변수만 namespace 에 저장.
     # 모듈/함수/클래스는 직렬화 비용 대비 가치가 낮아 제외.

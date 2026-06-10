@@ -26,6 +26,7 @@ from agent.registries.tools import register_tool
 from agent.charts.chart_renderer import render_spec_to_echarts
 from agent.charts.chart_spec import ChartSpecV1
 from core.config import RESULT_DIR
+from core.result_store import current_client_id, read_manifest_entries
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,10 @@ class ImageItem(BaseModel):
 # ---------------------------------------------------------------------------
 
 _DATA_URI_SIZE_WARN_BYTES = 4_000_000
+
+# data.source 미발견 시 안내할 parquet 후보 수와 manifest 조회 폭.
+_PARQUET_HINT_LIMIT = 5
+_MANIFEST_SCAN_LIMIT = 30
 
 
 def _resolve_image_source(source: str) -> tuple[str, str | None]:
@@ -153,6 +158,29 @@ def resolve_spec_path(source: str) -> tuple[Path | None, str | None]:
     return spec_path, None
 
 
+def _session_parquet_hint() -> str:
+    """data.source 미발견 시 세션 manifest 의 parquet 후보를 안내 문구로 만든다.
+
+    LLM 이 과거 턴 parquet 경로를 추측하다 반복 실패하는 대신, 실제 존재하는
+    경로 목록을 받아 한 번에 self-correct 하도록 돕는다.
+
+    Returns:
+        "\\n세션에서 사용 가능한 parquet: ..." 형식 힌트. 후보가 없으면 빈 문자열.
+    """
+    client_id = current_client_id()
+    if not client_id:
+        return ""
+    candidates = [
+        str(entry.get("path", ""))
+        for entry in read_manifest_entries(client_id, _MANIFEST_SCAN_LIMIT)
+        if str(entry.get("path", "")).endswith(".parquet")
+    ][:_PARQUET_HINT_LIMIT]
+    if not candidates:
+        return ""
+    joined = ", ".join(candidates)
+    return f"\n세션에서 사용 가능한 parquet: {joined}"
+
+
 # ---------------------------------------------------------------------------
 # 도구 등록
 # ---------------------------------------------------------------------------
@@ -215,9 +243,12 @@ async def display_image(
         "(3) display_chart(source='result/.../charts.spec.json'). "
         "ChartSpecV1 스키마: "
         "{version:'1', charts:[{mark, title, data:{source:'<parquet 파일명>'}, "
-        "encoding:{x:{field,type},y:{field,type},color?:{field,type}}, extra_option?}]}. "
+        "encoding:{x:{field,type,bin?},y:{field,type},color?:{field,type}}, extra_option?}]}. "
         "mark: bar | line | scatter | box | histogram | heatmap | ecdf "
         "(ecdf=경험적 누적분포: quantitative x 만 필요, y 는 자동 누적비율, color 로 그룹별 곡선). "
+        "mark별 필수 조건: histogram 은 quantitative x 만 필요(x.bin 은 자동 적용), "
+        "box 는 y 필수, heatmap 은 x·y·color 모두 필수(color.type=quantitative), "
+        "ecdf 는 quantitative x. "
         "encoding.type: quantitative (수치축) | nominal (범주축) | temporal (시간축). "
         "data.source 는 같은 폴더의 parquet 파일명(상대) 또는 이전 턴 parquet 을 재사용할 때 "
         "'result/...' 전체 상대 경로. "
@@ -269,7 +300,13 @@ async def display_chart(
 
     try:
         rendered = render_spec_to_echarts(spec, base_dir=spec_path.parent)
-    except (FileNotFoundError, ValueError) as exc:
+    except FileNotFoundError as exc:
+        # data.source 미발견 — 추측 재시도 대신 실존 경로 후보를 함께 회신한다.
+        return ToolResult(
+            content=f"[display_chart 오류] 렌더링 실패: {exc}{_session_parquet_hint()}",
+            is_error=True,
+        )
+    except ValueError as exc:
         return ToolResult(
             content=f"[display_chart 오류] 렌더링 실패: {exc}",
             is_error=True,

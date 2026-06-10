@@ -20,7 +20,7 @@
 ## 3. 결과 표시 (display_image / display_chart / display_markdown)
 
 - `display_image`·`display_markdown` 은 디스크에 **이미 존재하는 파일**만 표시할 수 있다. 없으면 먼저 `save_artifact` 또는 다른 저장 도구로 만든다.
-- `display_chart` 는 inline 데이터로 동작하므로 사전 저장 없이 즉시 호출 가능. 단, 원본 보존이 필요하면 `save_artifact(kind='json')` 를 병행한다.
+- `display_chart` 는 디스크의 spec 파일 기반이다. 표준 체인: `save_artifact(kind='parquet', source='$df')` → `save_artifact(kind='json', filename='*.spec.json', content=<ChartSpecV1>)` → `display_chart(source=반환된 spec 경로)`. 이전 턴 parquet 을 재사용하려면 spec 의 `data.source` 에 `# Session Artifacts` 섹션의 `result/...` 전체 경로를 그대로 적는다.
 - 차트 타입 선택 가이드:
   - 두 변수 상관관계 → `scatter`
   - 시간에 따른 추세 → `line`
@@ -72,7 +72,12 @@ system prompt 의 `# 가용 SKILL 카탈로그 (비활성)` 섹션에 현재 비
 
 system prompt 의 `# Available Library APIs` 섹션이 보이거나 활성 SKILL/에이전트가 `api_refs` 를 가지면, 백엔드 환경에 설치된 외부 Python 라이브러리를 다음 도구들로 실행할 수 있다. SKILL 본문이 절차를 명세하지 않아도 LLM 이 스스로 plan 을 세워 사용하는 것이 표준 흐름이다.
 
-### 7.1 표준 워크플로우 (api_refs 가 있는 SKILL/에이전트)
+### 8.1 라이브러리 선택 가이드
+
+- DataFrame·데이터 처리 작업은 **polars 를 우선** 사용한다 (`pl.DataFrame`, `pl.read_parquet`, `df.write_parquet` 등). pandas 는 polars 로 불가능하거나 대상 라이브러리가 pandas 객체를 직접 요구할 때만 사용한다.
+- parquet 저장의 기본 경로: `exec_code` 안에서 `df.write_parquet(str(artifact_dir() / "data.parquet"))` 또는 `save_artifact(kind='parquet', source='$df')`.
+
+### 8.2 표준 워크플로우 (api_refs 가 있는 SKILL/에이전트)
 
 1. `# Available Library APIs` 섹션에 노출된 시그니처/docstring 으로 충분하면 추가 조회 없이 진행.
 2. 시그니처가 모호하거나 펼침에 누락된 멤버를 써야 하면 `inspect_callable(qualified_name=...)` 또는 `list_module_members(module_path=...)` 로 보충.
@@ -82,13 +87,13 @@ system prompt 의 `# Available Library APIs` 섹션이 보이거나 활성 SKILL
 6. 변수의 실제 데이터가 궁금하면 `describe_variable(name=...)` 으로 타입별 요약 (DataFrame head, ndarray shape 등) 확인.
 7. 작업이 끝나면 결과 수치/통계를 사용자에게 자연어로 답한다. Case 5 형식에 맞춰 어떤 함수를 호출했고 어떤 결과가 나왔는지 한두 줄로 보고한다.
 
-### 7.2 namespace 변수 lifecycle
+### 8.3 namespace 변수 lifecycle
 
 - 변수는 같은 세션 동안만 유효하며, 세션 종료 또는 EXE 재기동 시 자동 정리된다.
 - 큰 객체(예: 대용량 DataFrame)는 자동으로 디스크에 spill 되어도 LLM 이 신경 쓸 필요는 없다 — `tier=disk` 표시는 단순 정보용.
 - 변수 총 수에 한도(`APP_NAMESPACE_MAX_VARS`, 기본 20)가 있어 초과 시 가장 오래된 변수가 제거된다. 명시적 정리를 원하면 `delete_variable(name=...)`.
 
-### 7.3 자주 하는 실수
+### 8.4 자주 하는 실수
 
 - ❌ `call_function` 의 `kwargs` 에 namespace 변수 객체를 통째로 JSON 으로 직렬화해 넣으려 함 → ✅ `"$varname"` 으로 참조 전달.
 - ❌ `eval_expression` 에 `import os` 같은 statement → ✅ 짧은 표현식만. 라이브러리 함수가 필요하면 `call_function`.

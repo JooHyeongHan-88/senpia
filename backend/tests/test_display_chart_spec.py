@@ -164,6 +164,76 @@ def test_invalid_path_prefix_rejected() -> None:
     assert "result/" in result.content
 
 
+def test_histogram_without_bin_auto_corrected() -> None:
+    """x.bin 을 생략한 histogram spec 도 자동 보정되어 렌더된다.
+
+    bin=True 는 histogram 의 무조건적 필수값 — LLM 이 스키마 세부를 몰라
+    에러→재시도를 반복하던 회귀 케이스.
+    """
+    from agent.charts.chart_spec import ChartSpecV1
+
+    raw_spec = {
+        "version": "1",
+        "charts": [
+            {
+                "mark": "histogram",
+                "title": "분포",
+                "data": {"source": "values.parquet"},
+                "encoding": {"x": {"field": "v", "type": "quantitative"}},
+            }
+        ],
+    }
+    # 모델 레벨 — validator 가 bin 을 자동 보정.
+    spec = ChartSpecV1.model_validate(raw_spec)
+    assert spec.charts[0].encoding.x is not None
+    assert spec.charts[0].encoding.x.bin is True
+
+    # e2e — display_chart 를 통과해 실제 렌더까지 성공.
+    slot = _setup()
+    _write_parquet(
+        slot,
+        "values.parquet",
+        pl.DataFrame({"v": [1.0, 2.0, 2.5, 3.0, 4.0, 4.5]}),
+    )
+    spec_path = _write_spec(slot, raw_spec, filename="hist.spec.json")
+    result = _chart(source=_rel_source(slot, spec_path.name))
+    assert result.is_error is False, result.content
+
+
+def test_missing_parquet_error_lists_session_candidates() -> None:
+    """data.source 미발견 에러에 세션 내 실존 parquet 후보가 함께 안내된다."""
+    import uuid
+
+    # 고유 cid 로 격리 — 디스크 스캔 fallback 이 이 세션의 parquet 만 잡도록.
+    result_store.set_session_context(f"hint{uuid.uuid4().hex[:8]}", "힌트테스트")
+    slot = result_store.turn_slot()
+    _write_parquet(slot, "real_data.parquet", pl.DataFrame({"v": [1.0, 2.0]}))
+    spec_path = _write_spec(
+        slot,
+        {
+            "version": "1",
+            "charts": [
+                {
+                    "mark": "bar",
+                    "data": {"source": "wrong_name.parquet"},
+                    "encoding": {
+                        "x": {"field": "x", "type": "nominal"},
+                        "y": {"field": "y", "type": "quantitative"},
+                    },
+                }
+            ],
+        },
+        filename="hint.spec.json",
+    )
+
+    result = _chart(source=_rel_source(slot, spec_path.name))
+
+    assert result.is_error is True
+    assert "wrong_name.parquet" in result.content
+    assert "세션에서 사용 가능한 parquet" in result.content
+    assert "real_data.parquet" in result.content
+
+
 def test_rendered_is_overwritten_on_re_run() -> None:
     """동일 spec 으로 두 번 호출하면 rendered 가 deterministic 하게 재생성된다."""
     slot = _setup()
