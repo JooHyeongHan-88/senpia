@@ -124,6 +124,25 @@ export function artifactCsvUrl(path) {
 }
 
 /**
+ * 산출물이 저장된 폴더를 OS 파일 탐색기(Windows Explorer)에서 연다.
+ *
+ * @param {string} path  산출물 파일 경로 (result/...) — 그 파일이 든 폴더가 열린다.
+ * @returns {Promise<{ path: string }>}
+ */
+export async function revealArtifactPath(path) {
+  const r = await fetch("/api/artifact/reveal", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ path }),
+  });
+  if (!r.ok) {
+    const detail = await r.text().catch(() => "");
+    throw new Error(detail || `HTTP ${r.status}`);
+  }
+  return r.json();
+}
+
+/**
  * 라이트박스 오픈 시 undo/redo 초기 상태를 조회한다 (재렌더 없음).
  *
  * @param {string} spec  charts.spec.json 경로 (result/...)

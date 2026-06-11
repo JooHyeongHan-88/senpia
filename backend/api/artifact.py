@@ -1,14 +1,18 @@
-"""parquet 산출물 미리보기·CSV 변환 라우터 — 데이터 칩 패널 전용.
+"""아티팩트 패널 HTTP 경계 — parquet 미리보기·CSV 변환 + 산출물 폴더 열기.
 
 프론트 ArtifactData 패널이 head(N) 미리보기 테이블을 그리고, 사용자가 전체
-데이터를 CSV 로 내려받을 수 있게 한다. 경로 해석은 core.result_store 의
-resolve_result_path (RESULT_DIR 절대 기준 + containment) 로 일원화한다.
+데이터를 CSV 로 내려받을 수 있게 한다. 또한 패널 헤더의 '폴더 열기' 버튼이
+산출물이 저장된 폴더를 OS 파일 탐색기로 연다. 모든 경로 해석은 core.result_store
+의 resolve_result_path (RESULT_DIR 절대 기준 + containment) 로 일원화한다.
 """
 
 from __future__ import annotations
 
 import logging
 import math
+import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Annotated, Any
 from urllib.parse import quote
@@ -16,9 +20,10 @@ from urllib.parse import quote
 import polars as pl
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
+from pydantic import BaseModel
 
 from api.deps import require_local_origin
-from core.result_store import resolve_result_path
+from core.result_store import resolve_result_path, to_result_relative
 
 logger = logging.getLogger(__name__)
 
@@ -121,3 +126,50 @@ async def artifact_csv(
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": disposition},
     )
+
+
+class RevealRequest(BaseModel):
+    """산출물 폴더 열기 요청 — 칩이 가리키는 'result/...' 경로 한 건."""
+
+    path: Annotated[str, "산출물 파일 경로 (result/...). 그 파일이 든 폴더를 연다."]
+
+
+def _open_folder(folder: Path) -> None:
+    """OS 파일 탐색기에서 폴더를 연다.
+
+    배포 대상은 Windows EXE 이므로 os.startfile 이 정상 경로다. macOS/Linux 분기는
+    dev 편의용 폴백이며, 테스트는 이 함수를 monkeypatch 해 실제 탐색기를 띄우지 않는다.
+
+    Args:
+        folder: 열 폴더의 절대 Path. 호출자가 RESULT_DIR 하위로 검증 후 전달한다.
+
+    Raises:
+        OSError: 탐색기 기동에 실패할 때 (경로 부재·권한 등).
+    """
+    if sys.platform == "win32":
+        os.startfile(str(folder))  # type: ignore[attr-defined]
+        return
+    opener = "open" if sys.platform == "darwin" else "xdg-open"
+    subprocess.Popen([opener, str(folder)])
+
+
+@router.post("/artifact/reveal")
+async def artifact_reveal(req: RevealRequest) -> dict[str, str]:
+    """산출물이 저장된 폴더를 OS 파일 탐색기에서 연다.
+
+    프론트 아티팩트 패널의 '폴더 열기' 버튼 전용. 경로는 칩이 들고 있는 파일
+    'result/...' 이며, 그 파일이 속한 타임스탬프 폴더를 연다.
+    """
+    target, error = resolve_result_path(req.path)
+    if error or target is None:
+        raise HTTPException(
+            status_code=404, detail=error or "산출물을 찾을 수 없습니다."
+        )
+
+    folder = target if target.is_dir() else target.parent
+    try:
+        _open_folder(folder)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"폴더 열기 실패: {exc}") from exc
+
+    return {"path": to_result_relative(folder)}

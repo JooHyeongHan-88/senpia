@@ -190,6 +190,7 @@ run_turn(client_id, user_message, *, agent_registry, force_skills=None, ...)
 |---|---|
 | `GET /api/artifact/preview?path=&rows=10` | head(N) 미리보기 — `scan_parquet` 으로 total_rows 만 집계(전체 로드 없음) + `read_parquet(n_rows)`. NaN/inf → null, 비원시 타입 → str (브라우저 JSON.parse 안전) |
 | `GET /api/artifact/csv?path=` | 전체 데이터 CSV 변환 첨부 응답 — 한글 파일명 대응 RFC 5987 `filename*` |
+| `POST /api/artifact/reveal {path}` | 산출물이 든 폴더를 OS 파일 탐색기(Windows `os.startfile`)로 연다 — 패널 헤더 '폴더 열기' 버튼. 파일 경로면 부모 폴더를 연다. `_open_folder` 는 테스트가 monkeypatch (실 탐색기 미기동) |
 
 테스트: `backend/tests/test_artifact_preview_api.py`
 

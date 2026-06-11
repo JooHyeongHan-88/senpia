@@ -6,7 +6,11 @@
 
 import { ui, activeSession } from "./state.svelte.js";
 import { saveArtifactPanelOpen } from "./storage.js";
-import { postChartFilter, getChartFilterState } from "./api.js";
+import {
+  postChartFilter,
+  getChartFilterState,
+  revealArtifactPath,
+} from "./api.js";
 
 /**
  * 새 아티팩트 칩 객체를 만든다 (메시지에 직접 임베드할 형태).
@@ -97,6 +101,26 @@ export function insertArtifactReference(chipId) {
   if (!path) return;
   // Composer 의 $effect 가 composerSeed 를 감지해 textarea 끝에 append 한다.
   ui.composerSeed = path;
+}
+
+/**
+ * 활성 칩의 산출물이 저장된 폴더를 OS 파일 탐색기(Windows Explorer)에서 연다.
+ * 칩의 참조 경로 중 첫 경로를 백엔드에 보내면 그 파일이 속한 타임스탬프 폴더가 열린다
+ * (이미지 갤러리는 여러 경로가 줄바꿈으로 이어지지만 같은 폴더이므로 첫 경로면 충분).
+ *
+ * @param {string} chipId
+ */
+export async function revealArtifactFolder(chipId) {
+  const chip = _findChip(chipId);
+  if (!chip) return;
+  const ref = artifactRefPath(chip);
+  if (!ref) return;
+  const path = ref.split("\n")[0];
+  try {
+    await revealArtifactPath(path);
+  } catch (err) {
+    console.error("reveal artifact folder failed:", err);
+  }
 }
 
 /** '/result/...' URL 형태를 백엔드가 받는 'result/...' 상대 경로로 환원한다. */

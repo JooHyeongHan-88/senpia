@@ -1,7 +1,8 @@
-"""/api/artifact/preview·csv 엔드포인트 통합 검증 — 데이터 칩 패널 HTTP 경계.
+"""/api/artifact/preview·csv·reveal 엔드포인트 통합 검증 — 아티팩트 패널 HTTP 경계.
 
 TestClient 로 라우터를 직접 구동해 경로 검증(resolve_result_path containment)·
-head 미리보기·CSV 변환이 HTTP 경계에서 올바르게 엮이는지 확인한다.
+head 미리보기·CSV 변환·폴더 열기가 HTTP 경계에서 올바르게 엮이는지 확인한다.
+reveal 은 실제 탐색기를 띄우지 않도록 _open_folder 를 monkeypatch 한다.
 dev(non-frozen)라 origin 가드는 통과.
 """
 
@@ -137,3 +138,58 @@ def test_csv_returns_full_data_as_attachment(client: TestClient) -> None:
 def test_csv_rejects_non_parquet(client: TestClient) -> None:
     resp = client.get("/api/artifact/csv", params={"path": "result/sess/ts/note.md"})
     assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# /api/artifact/reveal
+# ---------------------------------------------------------------------------
+
+
+def test_reveal_opens_containing_folder(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """파일 경로를 주면 그 파일이 속한 폴더가 탐색기로 열린다."""
+    opened: list[Path] = []
+    monkeypatch.setattr(
+        "api.artifact._open_folder", lambda folder: opened.append(folder)
+    )
+
+    resp = client.post("/api/artifact/reveal", json={"path": _PARQUET_PATH})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["path"] == "result/sess/ts"
+
+    assert len(opened) == 1
+    assert opened[0].name == "ts"
+    assert (opened[0] / "data.parquet").exists()  # 폴더는 파일의 부모.
+
+
+def test_reveal_missing_file_returns_404(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """존재하지 않는 산출물은 404 이며 탐색기를 띄우지 않는다."""
+    opened: list[Path] = []
+    monkeypatch.setattr(
+        "api.artifact._open_folder", lambda folder: opened.append(folder)
+    )
+
+    resp = client.post(
+        "/api/artifact/reveal", json={"path": "result/sess/ts/ghost.parquet"}
+    )
+    assert resp.status_code == 404
+    assert opened == []
+
+
+def test_reveal_rejects_traversal(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """RESULT_DIR 밖으로 벗어나는 경로는 거부한다."""
+    opened: list[Path] = []
+    monkeypatch.setattr(
+        "api.artifact._open_folder", lambda folder: opened.append(folder)
+    )
+
+    resp = client.post(
+        "/api/artifact/reveal", json={"path": "result/../escape.parquet"}
+    )
+    assert resp.status_code == 404
+    assert opened == []

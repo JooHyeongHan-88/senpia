@@ -6,6 +6,7 @@
     listSessionArtifacts,
     artifactRefPath,
     insertArtifactReference,
+    revealArtifactFolder,
   } from "../lib/artifactActions.svelte.js";
   import {
     saveArtifactWidth,
@@ -93,6 +94,24 @@
             aria-label="입력창에 참조 삽입"
           >
             @ 참조
+          </button>
+          <button
+            class="folder-btn"
+            onclick={() => revealArtifactFolder(activeArtifact.id)}
+            title="산출물 폴더를 탐색기에서 열기"
+            aria-label="산출물 폴더를 탐색기에서 열기"
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.4"
+              stroke-linejoin="round"
+            >
+              <path d="M1.75 4.25a1 1 0 0 1 1-1h2.7l1.4 1.5h6.4a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H2.75a1 1 0 0 1-1-1z" />
+            </svg>
           </button>
         {/if}
         <button class="close-btn" onclick={closeArtifactPanel} aria-label="패널 닫기">
@@ -242,6 +261,26 @@
 
   .ref-btn:hover {
     background: color-mix(in srgb, var(--accent) 20%, transparent);
+  }
+
+  .folder-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border: none;
+    background: transparent;
+    color: var(--fg-muted);
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    flex-shrink: 0;
+    transition: background 0.12s, color 0.12s;
+  }
+
+  .folder-btn:hover {
+    background: var(--bg-hover);
+    color: var(--fg);
   }
 
   .close-btn {
