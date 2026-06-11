@@ -163,6 +163,25 @@ def test_reveal_opens_containing_folder(
     assert (opened[0] / "data.parquet").exists()  # 폴더는 파일의 부모.
 
 
+def test_reveal_is_extension_agnostic(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """reveal 은 parquet 전용이 아니다 — 패널의 모든 칩 종류(markdown 등)가 쓴다.
+
+    preview/csv 처럼 _resolve_parquet 을 재사용하는 리팩토링이 들어오면
+    markdown·chart·image 칩의 폴더 열기가 조용히 400 으로 회귀하는 것을 막는다.
+    """
+    opened: list[Path] = []
+    monkeypatch.setattr(
+        "api.artifact._open_folder", lambda folder: opened.append(folder)
+    )
+
+    resp = client.post("/api/artifact/reveal", json={"path": "result/sess/ts/note.md"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["path"] == "result/sess/ts"
+    assert len(opened) == 1
+
+
 def test_reveal_missing_file_returns_404(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

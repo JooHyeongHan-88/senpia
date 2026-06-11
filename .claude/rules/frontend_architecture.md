@@ -88,6 +88,7 @@ import {
   filterChartSelection, undoChartFilter, redoChartFilter, resetChartFilter,
   excludeLegend, setChartLegend,   // 레전드 Filter / 순서·색상·Hide
   artifactRefPath, insertArtifactReference,   // 칩→Composer 경로 참조 삽입
+  revealArtifactFolder,   // 패널 헤더 '폴더 열기' — 탐색기 reveal
 } from "$lib/artifactActions.svelte.js";
 ```
 
@@ -267,6 +268,7 @@ ArtifactChart (그리드)        ArtifactLightbox (라이트박스)
 - `artifactRefPath(chip)` — 칩 종류별 참조 경로 환원: chart는 `payload.spec`(이미 `result/...`; parquet 은 spec 의 `data.source` 로 연계 발견되므로 spec 하나가 인용 단위), markdown은 `/result/...` URL → `result/...`, data는 `payload.path` 그대로. image는 **인용 가능한 모든 items 경로를 줄바꿈으로 이어 반환** (다중 이미지 갤러리 전체 인용; 경로에 공백이 들어갈 수 있어 공백 구분은 모호). data URI·외부 URL·workspace/assets 는 제외, 인용 가능한 경로가 하나도 없으면 `null` → 버튼 숨김.
 - `insertArtifactReference(chipId)` — `ui.composerSeed` 에 경로를 써넣는다. `MessageBubble` 의 칩은 `event.stopPropagation()` 으로 패널 열기(`openArtifact`)와 분리한 별도 `@` 버튼, `ArtifactPanel` 은 헤더의 `@ 참조` 버튼.
 - **Composer seed 는 replace→append 로 변경됨**: `value ? value.trimEnd() + " " + seed : seed`. 기존 입력 뒤에 공백으로 이어 붙는다. `rewindToMessage` 는 빈 composer 에서 발동하므로 동작 불변.
+- `revealArtifactFolder(chipId)` — 패널 헤더 '폴더 열기' 버튼. 참조 경로의 **고유 폴더마다** `POST /api/artifact/reveal` 1회 (이미지 갤러리는 과거 산출물 재표시가 섞여 여러 턴 폴더에 흩어질 수 있음 — 대개 1개). 전부 성공 시 `true` 반환; 실패하면 `ArtifactPanel` 이 버튼을 2.4s 적색 플래시(`--danger`)+툴팁 교체로 피드백한다 (탐색기 창은 브라우저 밖이라 무소음 실패는 성공과 구분 불가).
 
 ## 데이터 칩 (kind: "data") — parquet 중간 산출물 인용
 

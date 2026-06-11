@@ -33,6 +33,30 @@ _PREVIEW_DEFAULT_ROWS = 10
 _PREVIEW_MAX_ROWS = 100
 
 
+def _resolve_artifact_or_404(path: str) -> Path:
+    """'result/...' 경로를 RESULT_DIR 하위로 검증된 절대 Path 로 환원한다.
+
+    preview/csv/reveal 이 같은 해석·404 규약을 공유하는 단일 지점.
+    reveal 은 확장자 무관(markdown·spec·이미지 칩 포함)이므로 parquet 제약은
+    여기가 아니라 _resolve_parquet 이 얹는다.
+
+    Args:
+        path: 칩 payload 가 들고 있는 'result/...' 형식 경로.
+
+    Returns:
+        RESULT_DIR 하위로 검증된 절대 Path.
+
+    Raises:
+        HTTPException: 경로 해석 실패(404).
+    """
+    target, error = resolve_result_path(path)
+    if error or target is None:
+        raise HTTPException(
+            status_code=404, detail=error or "산출물을 찾을 수 없습니다."
+        )
+    return target
+
+
 def _resolve_parquet(path: str) -> Path:
     """'result/...' 경로를 검증된 parquet 절대 Path 로 환원한다.
 
@@ -45,11 +69,7 @@ def _resolve_parquet(path: str) -> Path:
     Raises:
         HTTPException: 경로 해석 실패(404) 또는 parquet 이 아닌 파일(400).
     """
-    target, error = resolve_result_path(path)
-    if error or target is None:
-        raise HTTPException(
-            status_code=404, detail=error or "산출물을 찾을 수 없습니다."
-        )
+    target = _resolve_artifact_or_404(path)
     if target.suffix.lower() != ".parquet":
         raise HTTPException(
             status_code=400, detail=f"parquet 산출물만 지원합니다: {path!r}"
@@ -160,11 +180,7 @@ async def artifact_reveal(req: RevealRequest) -> dict[str, str]:
     프론트 아티팩트 패널의 '폴더 열기' 버튼 전용. 경로는 칩이 들고 있는 파일
     'result/...' 이며, 그 파일이 속한 타임스탬프 폴더를 연다.
     """
-    target, error = resolve_result_path(req.path)
-    if error or target is None:
-        raise HTTPException(
-            status_code=404, detail=error or "산출물을 찾을 수 없습니다."
-        )
+    target = _resolve_artifact_or_404(req.path)
 
     folder = target if target.is_dir() else target.parent
     try:

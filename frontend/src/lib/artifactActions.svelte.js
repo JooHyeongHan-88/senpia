@@ -105,22 +105,38 @@ export function insertArtifactReference(chipId) {
 
 /**
  * 활성 칩의 산출물이 저장된 폴더를 OS 파일 탐색기(Windows Explorer)에서 연다.
- * 칩의 참조 경로 중 첫 경로를 백엔드에 보내면 그 파일이 속한 타임스탬프 폴더가 열린다
- * (이미지 갤러리는 여러 경로가 줄바꿈으로 이어지지만 같은 폴더이므로 첫 경로면 충분).
+ * 이미지 갤러리는 과거 산출물 재표시가 섞일 수 있어 항목들이 서로 다른 턴 폴더에
+ * 흩어질 수 있다 — 첫 경로만 열면 보고 있는 항목의 폴더가 아닐 수 있으므로
+ * 고유 폴더마다 한 번씩 연다 (대부분 1개라 동작 변화 없음).
  *
  * @param {string} chipId
+ * @returns {Promise<boolean>}  전부 성공하면 true — 호출부가 실패 피드백을 표시한다.
  */
 export async function revealArtifactFolder(chipId) {
   const chip = _findChip(chipId);
-  if (!chip) return;
+  if (!chip) return false;
   const ref = artifactRefPath(chip);
-  if (!ref) return;
-  const path = ref.split("\n")[0];
-  try {
-    await revealArtifactPath(path);
-  } catch (err) {
-    console.error("reveal artifact folder failed:", err);
+  if (!ref) return false;
+
+  // 폴더 단위로 중복 제거하되 요청에는 파일 경로를 그대로 보낸다 —
+  // 부모 폴더 환원은 백엔드(artifact_reveal)의 단일 책임으로 남긴다.
+  const seenFolders = new Set();
+  const targets = [];
+  for (const path of ref.split("\n")) {
+    const folder = path.slice(0, path.lastIndexOf("/"));
+    if (seenFolders.has(folder)) continue;
+    seenFolders.add(folder);
+    targets.push(path);
   }
+
+  const results = await Promise.allSettled(
+    targets.map((path) => revealArtifactPath(path)),
+  );
+  const failures = results.filter((r) => r.status === "rejected");
+  for (const failure of failures) {
+    console.error("reveal artifact folder failed:", failure.reason);
+  }
+  return failures.length === 0;
 }
 
 /** '/result/...' URL 형태를 백엔드가 받는 'result/...' 상대 경로로 환원한다. */

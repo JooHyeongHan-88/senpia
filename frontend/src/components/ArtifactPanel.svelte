@@ -1,4 +1,5 @@
 <script>
+  import { onDestroy } from "svelte";
   import { ui } from "../lib/state.svelte.js";
   import {
     closeArtifactPanel,
@@ -25,6 +26,25 @@
   let activeArtifact = $derived(
     sessionArtifacts.find((a) => a.id === ui.activeArtifactId) ?? null,
   );
+
+  // 폴더 열기 실패 피드백 — 탐색기 창은 브라우저 밖에서 열리므로 실패가 조용하면
+  // '뒤에 열렸나'와 '실패했나'를 구분할 수 없다. 버튼을 잠시 적색으로 플래시한다.
+  const REVEAL_FAILED_FLASH_MS = 2400;
+  let revealFailed = $state(false);
+  let revealFailedTimer = null;
+
+  async function handleRevealClick() {
+    const ok = await revealArtifactFolder(activeArtifact.id);
+    if (ok) return;
+    revealFailed = true;
+    clearTimeout(revealFailedTimer);
+    revealFailedTimer = setTimeout(
+      () => (revealFailed = false),
+      REVEAL_FAILED_FLASH_MS,
+    );
+  }
+
+  onDestroy(() => clearTimeout(revealFailedTimer));
 
   // 드래그 리사이즈 — 화면 우측에서 좌측으로 갈수록 너비 증가.
   let resizing = $state(false);
@@ -97,8 +117,11 @@
           </button>
           <button
             class="folder-btn"
-            onclick={() => revealArtifactFolder(activeArtifact.id)}
-            title="산출물 폴더를 탐색기에서 열기"
+            class:failed={revealFailed}
+            onclick={handleRevealClick}
+            title={revealFailed
+              ? "폴더를 열 수 없습니다 — 산출물이 삭제되었을 수 있습니다"
+              : "산출물 폴더를 탐색기에서 열기"}
             aria-label="산출물 폴더를 탐색기에서 열기"
           >
             <svg
@@ -281,6 +304,21 @@
   .folder-btn:hover {
     background: var(--bg-hover);
     color: var(--fg);
+  }
+
+  .folder-btn.failed {
+    color: var(--danger);
+    background: var(--danger-bg);
+    animation: folder-btn-shake 0.3s ease;
+  }
+
+  @keyframes folder-btn-shake {
+    25% {
+      transform: translateX(-2px);
+    }
+    75% {
+      transform: translateX(2px);
+    }
   }
 
   .close-btn {

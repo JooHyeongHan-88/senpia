@@ -2,6 +2,21 @@
 
 const headers = { "Content-Type": "application/json" };
 
+/**
+ * 응답이 OK 면 JSON 을 반환하고, 아니면 본문 detail 을 메시지로 담은 Error 를 던진다.
+ * JSON 응답을 기대하면서 실패를 호출부로 전파해야 하는 엔드포인트 공용.
+ *
+ * @param {Response} r
+ * @returns {Promise<any>}
+ */
+async function _jsonOrThrow(r) {
+  if (!r.ok) {
+    const detail = await r.text().catch(() => "");
+    throw new Error(detail || `HTTP ${r.status}`);
+  }
+  return r.json();
+}
+
 export async function chat(clientId, message, opts = {}) {
   // opts.forceSkills: 슬래시 커맨드로 사용자가 명시한 skill 이름 배열.
   //   백엔드 ChatRequest.force_skills 와 매핑된다 (snake_case 변환).
@@ -87,11 +102,7 @@ export async function postChartFilter(body) {
     headers,
     body: JSON.stringify(body),
   });
-  if (!r.ok) {
-    const detail = await r.text().catch(() => "");
-    throw new Error(detail || `HTTP ${r.status}`);
-  }
-  return r.json();
+  return _jsonOrThrow(r);
 }
 
 /**
@@ -106,11 +117,7 @@ export async function postChartFilter(body) {
  */
 export async function getArtifactPreview(path) {
   const r = await fetch(`/api/artifact/preview?path=${encodeURIComponent(path)}`);
-  if (!r.ok) {
-    const detail = await r.text().catch(() => "");
-    throw new Error(detail || `HTTP ${r.status}`);
-  }
-  return r.json();
+  return _jsonOrThrow(r);
 }
 
 /**
@@ -135,11 +142,7 @@ export async function revealArtifactPath(path) {
     headers,
     body: JSON.stringify({ path }),
   });
-  if (!r.ok) {
-    const detail = await r.text().catch(() => "");
-    throw new Error(detail || `HTTP ${r.status}`);
-  }
-  return r.json();
+  return _jsonOrThrow(r);
 }
 
 /**
