@@ -2,16 +2,16 @@
 
 from fastapi import APIRouter, Depends
 
-from _version import __version__
 from api.deps import require_local_origin
 from core import updater
+from core.version import APP_VERSION
 
 router = APIRouter(prefix="/api", dependencies=[Depends(require_local_origin)])
 
 
 @router.get("/version")
 async def version():
-    return {"version": __version__}
+    return {"version": APP_VERSION}
 
 
 @router.get("/update/check")

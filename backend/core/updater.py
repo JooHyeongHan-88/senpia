@@ -18,8 +18,8 @@ from typing import Optional
 
 import httpx
 
-from _version import __version__
 from core import browser
+from core.version import APP_VERSION
 from core.config import (
     LATEST_JSON_URL,
     REPO_BASE_URL,
@@ -55,7 +55,7 @@ def get_state() -> dict:
 
 
 def current_version() -> str:
-    return __version__
+    return APP_VERSION
 
 
 def _parse_version(v: str) -> tuple[int, ...]:
@@ -111,7 +111,7 @@ def check_latest(force: bool = False) -> dict:
     except Exception as e:
         print(f"update check failed: {e}")
         return {
-            "current": __version__,
+            "current": APP_VERSION,
             "latest": None,
             "update_available": False,
             "error": "check_failed",
@@ -121,7 +121,7 @@ def check_latest(force: bool = False) -> dict:
     if err is not None:
         print(f"latest.json invalid: {err}")
         return {
-            "current": __version__,
+            "current": APP_VERSION,
             "latest": None,
             "update_available": False,
             "error": "invalid_metadata",
@@ -138,9 +138,9 @@ def _build_check_response(meta: dict) -> dict:
     latest = meta["version"]
 
     return {
-        "current": __version__,
+        "current": APP_VERSION,
         "latest": latest,
-        "update_available": _is_newer(latest, __version__),
+        "update_available": _is_newer(latest, APP_VERSION),
         "notes": meta.get("notes", ""),
         "size": meta.get("size", 0),
         "released_at": meta.get("released_at"),
@@ -216,7 +216,7 @@ def apply_update() -> dict:
     if meta is None:
         return {"ok": False, "error": "no_metadata"}
 
-    if not _is_newer(meta["version"], __version__):
+    if not _is_newer(meta["version"], APP_VERSION):
         return {"ok": False, "error": "already_latest"}
 
     _set_state(target_version=meta["version"])

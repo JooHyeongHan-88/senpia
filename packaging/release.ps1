@@ -1,7 +1,7 @@
 # packaging/release.ps1
 #
 # Steps:
-#   1. Sync version from pyproject.toml -> backend/_version.py
+#   1. Read version from pyproject.toml (App.spec generates _version.py at build time)
 #   2. Frontend build (Vite)             -> build/web/
 #   3. Updater.exe build                 -> build/updater/Updater.exe
 #   4. App EXE build                     -> release/{AppName}.exe
@@ -67,19 +67,13 @@ if (-not $AppName) {
 }
 Write-Host "==> app name  : $AppName"
 
-# 1. version sync: pyproject.toml -> backend/_version.py
+# 1. Read version from pyproject.toml (for latest.json / EXE filename)
 $pyproject = Get-Content "pyproject.toml" -Raw
 if ($pyproject -notmatch '(?m)^version\s*=\s*"([^"]+)"') {
     throw "version field not found in pyproject.toml"
 }
 $version = $Matches[1]
 Write-Host "==> version   : $version"
-
-[System.IO.File]::WriteAllText(
-    (Join-Path (Get-Location).Path "backend/_version.py"),
-    "__version__ = `"$version`"`n",
-    (New-Object System.Text.UTF8Encoding $false)
-)
 
 
 # 2. frontend build -> build/web/

@@ -2,11 +2,11 @@
 
 from fastapi import APIRouter, Depends
 
-from _version import __version__
 from agent.models import Message
 from agent.providers.factory import get_provider
 from api.deps import _settings_store, require_local_origin
 from core.config import APP_NAME
+from core.version import APP_VERSION
 from settings.masking import mask_api_key
 from settings.models import (
     ConnectionTestRequest,
@@ -21,7 +21,7 @@ router = APIRouter(prefix="/api", dependencies=[Depends(require_local_origin)])
 @router.get("/app-info")
 async def get_app_info() -> dict:
     """앱 이름과 버전 정보를 반환한다."""
-    return {"name": APP_NAME, "version": __version__}
+    return {"name": APP_NAME, "version": APP_VERSION}
 
 
 @router.get("/settings")

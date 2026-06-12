@@ -14,6 +14,7 @@ release/
 release/*
 dist/
 dist/*
+backend/_version.py
 
 # Agent runtime state (dev mode persistence)
 backend/.runtime/
