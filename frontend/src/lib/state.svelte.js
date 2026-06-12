@@ -84,3 +84,10 @@ export const ui = $state({
 export function activeSession() {
   return ui.sessions.find((s) => s.id === ui.activeSessionId) ?? null;
 }
+
+// 빈 세션(메시지 0개 · 생성 중 아님) 여부 — ChatArea 히어로 블록과 App 의
+// hero-spacer 가 공유하는 단일 조건. sendMessage 가 메시지를 동기 push 하므로
+// 전송 즉시 false 로 떨어진다 (streaming 체크는 belt-and-suspenders).
+export function isEmptySession() {
+  return (activeSession()?.messages ?? []).length === 0 && !ui.streaming;
+}

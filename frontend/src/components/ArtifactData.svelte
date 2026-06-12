@@ -187,17 +187,17 @@
     font-size: 11px;
     font-weight: 500;
     color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-    border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-border);
     border-radius: var(--radius-sm);
     padding: 3px 9px;
     cursor: pointer;
-    transition: background 0.15s;
+    transition: background var(--dur-fast);
     flex-shrink: 0;
   }
 
   .csv-btn:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--accent) 20%, transparent);
+    background: var(--accent-soft-strong);
   }
 
   .csv-btn:disabled {
@@ -310,10 +310,10 @@
     margin: 24px auto;
     max-width: 360px;
     padding: 14px 16px;
-    border: 1px dashed var(--danger, #d33);
+    border: 1px dashed var(--danger);
     border-radius: var(--radius-md);
-    color: var(--danger, #d33);
-    background: color-mix(in srgb, var(--danger, #d33) 7%, transparent);
+    color: var(--danger);
+    background: color-mix(in srgb, var(--danger) 7%, transparent);
     display: flex;
     flex-direction: column;
     gap: 6px;

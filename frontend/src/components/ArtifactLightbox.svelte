@@ -612,12 +612,12 @@
   .lightbox-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.55);
+    background: var(--backdrop);
     display: flex;
     align-items: center;
     justify-content: center;
     z-index: 9999;
-    animation: fade-in 0.15s ease-out;
+    animation: fade-in var(--dur-fast) ease-out;
   }
 
   .lightbox-backdrop.resizing {
@@ -634,8 +634,8 @@
     position: relative;
     background: var(--bg);
     border: 1px solid var(--border);
-    border-radius: var(--radius);
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -706,8 +706,8 @@
     color: var(--fg-muted);
     cursor: pointer;
     white-space: nowrap;
-    transition: background 0.12s, color 0.12s, border-color 0.12s;
-    height: 26px;
+    transition: background var(--dur-fast), color var(--dur-fast), border-color var(--dur-fast);
+    height: 28px;
   }
 
   .filter-btn:hover:not(:disabled) {
@@ -872,7 +872,7 @@
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
-    transition: background 0.12s, color 0.12s;
+    transition: background var(--dur-fast), color var(--dur-fast);
   }
 
   .eye-btn:hover:not(:disabled) {
@@ -891,8 +891,8 @@
 
   /* 기존 icon-btn 재사용 (헤더의 닫기 버튼과 동일 토큰) */
   .icon-btn {
-    width: 26px;
-    height: 26px;
+    width: 28px;
+    height: 28px;
     border: none;
     background: transparent;
     color: var(--fg-muted);
@@ -901,7 +901,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    transition: background 0.12s, color 0.12s;
+    transition: background var(--dur-fast), color var(--dur-fast);
   }
 
   .icon-btn:hover:not(:disabled) {
@@ -909,7 +909,7 @@
     color: var(--fg);
   }
 
-  /* Material Symbols 크기 — 26px 버튼에 맞춤 */
+  /* Material Symbols 크기 — 28px 버튼에 맞춤 */
   .icon-btn .material-symbols-outlined {
     font-size: 18px;
     line-height: 1;
@@ -970,7 +970,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    transition: background 0.12s, transform 0.12s;
+    transition: background var(--dur-fast), transform var(--dur-fast);
   }
 
   .nav-btn:hover {

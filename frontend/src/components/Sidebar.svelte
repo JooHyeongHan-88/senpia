@@ -6,6 +6,7 @@
   import { saveSidebarWidth, SIDEBAR_WIDTH_BOUNDS } from "../lib/storage.js";
   import SessionItem from "./SessionItem.svelte";
   import ModelPicker from "./ModelPicker.svelte";
+  import Logo from "./Logo.svelte";
 
   let resizing = $state(false);
 
@@ -71,11 +72,7 @@
   ></div>
   <div class="header">
     <div class="brand">
-      <span class="logo" aria-hidden="true">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
-        </svg>
-      </span>
+      <Logo size={20} />
       <div class="brand-text-wrap">
         <span class="brand-text">{ui.appName}</span>
         {#if ui.appVersion}
@@ -178,13 +175,13 @@
     cursor: ew-resize;
     z-index: 10;
     background: transparent;
-    transition: background 0.12s;
+    transition: background var(--dur-fast);
     touch-action: none;
   }
 
   .resize-handle:hover,
   .sidebar.resizing .resize-handle {
-    background: color-mix(in srgb, var(--accent) 35%, transparent);
+    background: var(--accent-border);
   }
 
   .header {
@@ -199,11 +196,6 @@
     align-items: center;
     gap: 8px;
     color: var(--fg);
-  }
-
-  .logo {
-    display: inline-flex;
-    color: var(--accent);
   }
 
   .brand-text-wrap {
@@ -229,7 +221,7 @@
     display: none;
     width: 28px;
     height: 28px;
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     color: var(--fg-muted);
     align-items: center;
     justify-content: center;
@@ -247,12 +239,12 @@
     margin: 4px 12px 12px;
     padding: 9px 12px;
     border: 1px solid var(--border-strong);
-    border-radius: 8px;
+    border-radius: var(--radius-sm);
     color: var(--fg);
     background: var(--bg);
     font-size: 13.5px;
     font-weight: 500;
-    transition: background 0.12s ease;
+    transition: background var(--dur-fast) ease;
   }
 
   .new-btn:hover:not(:disabled) {
@@ -299,7 +291,7 @@
     gap: 10px;
     flex: 1;
     padding: 8px 10px;
-    border-radius: 8px;
+    border-radius: var(--radius-sm);
     color: var(--fg);
     font-size: 13px;
   }
@@ -312,9 +304,9 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 34px;
-    height: 34px;
-    border-radius: 8px;
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius-sm);
     color: var(--fg-muted);
     flex-shrink: 0;
   }
@@ -328,7 +320,7 @@
     display: none;
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.35);
+    background: var(--backdrop);
     z-index: 9;
     border: none;
     cursor: default;
@@ -343,7 +335,7 @@
       height: 100%;
       width: 264px !important; /* 모바일은 고정 너비 */
       transform: translateX(-100%);
-      transition: transform 0.18s ease;
+      transition: transform var(--dur-slow) ease;
       box-shadow: var(--shadow-md);
     }
 

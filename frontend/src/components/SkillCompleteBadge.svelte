@@ -28,12 +28,12 @@
     gap: 6px;
     margin-top: 6px;
     padding: 3px 10px 3px 8px;
-    border-radius: 20px;
+    border-radius: var(--radius-full);
     background: color-mix(in srgb, var(--color-success) 10%, transparent);
     border: 1px solid color-mix(in srgb, var(--color-success) 30%, transparent);
     font-size: 11px;
     font-weight: 500;
-    animation: badge-in 0.2s ease-out both;
+    animation: badge-in var(--dur-slow) ease-out both;
   }
 
   .sc-icon {
@@ -48,7 +48,7 @@
 
   .sc-stat {
     padding: 1px 6px;
-    border-radius: 10px;
+    border-radius: var(--radius-full);
     font-size: 10px;
     font-weight: 600;
   }

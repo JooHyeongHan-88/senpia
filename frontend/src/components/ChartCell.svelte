@@ -23,8 +23,11 @@
   // 라이트박스 열기와 충돌해 사용자가 혼란스럽다.
   function optionForRender(raw) {
     if (!raw) return raw;
-    if (!embedded) return raw;
-    const { toolbox, brush, dataZoom, ...rest } = raw;
+    // ECharts dark 테마는 진남색 캔버스를 자체 도색한다 — 웜 다크 배경(--bg)과
+    // 충돌하므로 컨테이너 배경이 비치도록 투명 처리.
+    const base = isDark() ? { ...raw, backgroundColor: "transparent" } : raw;
+    if (!embedded) return base;
+    const { toolbox, brush, dataZoom, ...rest } = base;
     return rest;
   }
 
@@ -98,7 +101,14 @@
 
   {#if renderError}
     <div class="cell-error">
-      <span class="error-icon">📊</span>
+      <span class="error-icon">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 3v18h18" />
+          <path d="M18 17V9" />
+          <path d="M13 17V5" />
+          <path d="M8 17v-3" />
+        </svg>
+      </span>
       <span>차트를 그릴 수 없습니다.</span>
       <small>{renderError}</small>
     </div>
@@ -125,7 +135,7 @@
     flex-direction: column;
     background: var(--bg);
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-md);
     overflow: hidden;
     min-height: 0;
   }
@@ -160,7 +170,7 @@
     border: none;
     background: transparent;
     cursor: zoom-in;
-    transition: background 0.12s;
+    transition: background var(--dur-fast);
     width: 100%;
   }
 
@@ -185,13 +195,13 @@
     justify-content: center;
     gap: 6px;
     padding: 16px;
-    color: var(--color-danger, #e53e3e);
+    color: var(--danger);
     font-size: 12px;
     text-align: center;
   }
 
   .cell-error .error-icon {
-    font-size: 22px;
+    display: inline-flex;
   }
 
   .cell-error small {

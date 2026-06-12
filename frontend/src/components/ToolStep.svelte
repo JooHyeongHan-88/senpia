@@ -2,7 +2,7 @@
   /**
    * 단일 도구 호출을 접을 수 있는 카드로 표시한다.
    *
-   * - 접힘(기본): 🔧 name + 상태 표시자 (스피너/✓/⚠️)
+   * - 접힘(기본): 렌치 아이콘 + name + 상태 표시자 (스피너/✓/!)
    * - 펼침: detail(결과 텍스트) 표시
    * - status==="running" 동안 자동 펼침, 완료 시 자동 접힘.
    * - 사용자가 클릭하면 상태와 무관하게 토글된다.
@@ -22,7 +22,7 @@
 
   let statusLabel = $derived(
     seg.status === "ok" ? "✓" :
-    seg.status === "error" ? "⚠️" :
+    seg.status === "error" ? "!" :
     null
   );
 </script>
@@ -35,7 +35,11 @@
     aria-expanded={expanded}
   >
     <span class="chevron" class:open={expanded}>›</span>
-    <span class="tool-icon">🔧</span>
+    <span class="tool-icon" aria-hidden="true">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+      </svg>
+    </span>
     <span class="tool-name">{seg.name}</span>
     <span class="status-badge" class:ok={seg.status === "ok"} class:error={seg.status === "error"}>
       {#if isRunning}
@@ -67,8 +71,8 @@
     color: var(--fg-muted);
     font-size: 12px;
     font-family: var(--font-mono);
-    border-radius: 4px;
-    transition: color 0.13s, background 0.13s;
+    border-radius: var(--radius-sm);
+    transition: color var(--dur-fast), background var(--dur-fast);
     max-width: 100%;
   }
 
@@ -82,7 +86,7 @@
     font-size: 14px;
     line-height: 1;
     flex-shrink: 0;
-    transition: transform 0.18s ease;
+    transition: transform var(--dur-slow) ease;
     color: var(--fg-subtle);
   }
 
@@ -91,7 +95,8 @@
   }
 
   .tool-icon {
-    font-size: 12px;
+    display: inline-flex;
+    align-items: center;
     line-height: 1;
     flex-shrink: 0;
   }
@@ -118,6 +123,7 @@
 
   .status-badge.error {
     color: var(--danger);
+    font-weight: 700;
   }
 
   /* running 상태 스피너 */
@@ -125,7 +131,7 @@
     display: inline-block;
     width: 10px;
     height: 10px;
-    border: 1.5px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    border: 1.5px solid var(--accent-border);
     border-top-color: var(--accent);
     border-radius: 50%;
     animation: tool-spin 0.7s linear infinite;
@@ -147,7 +153,7 @@
     word-break: break-all;
     line-height: 1.5;
     background: var(--bg-elevated);
-    border-radius: 0 4px 4px 0;
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
     max-height: 200px;
     overflow-y: auto;
   }

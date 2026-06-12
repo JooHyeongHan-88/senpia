@@ -154,7 +154,7 @@
     color: var(--fg-muted);
     font-size: 12px;
     font-weight: 500;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
   }
 
   .todo-header:hover {
@@ -165,7 +165,7 @@
     display: inline-block;
     font-size: 14px;
     line-height: 1;
-    transition: transform 0.18s ease;
+    transition: transform var(--dur-slow) ease;
   }
 
   .chevron.open {
@@ -229,7 +229,7 @@
     display: inline-block;
     width: 12px;
     height: 12px;
-    border: 2px solid color-mix(in srgb, var(--accent) 25%, transparent);
+    border: 2px solid var(--accent-border);
     border-top-color: var(--accent);
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
@@ -302,7 +302,7 @@
     font-size: 11px;
     line-height: 1;
     color: var(--fg-subtle);
-    transition: transform 0.15s ease;
+    transition: transform var(--dur-fast) ease;
     flex-shrink: 0;
     margin-top: 2px;
   }
@@ -313,7 +313,7 @@
 
   .desc {
     color: var(--fg);
-    transition: color 0.15s;
+    transition: color var(--dur-fast);
   }
 
   /* 클릭 불가 일반 텍스트 설명 */

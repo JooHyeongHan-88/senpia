@@ -169,10 +169,10 @@
     margin: 24px auto;
     max-width: 360px;
     padding: 14px 16px;
-    border: 1px dashed var(--danger, #d33);
+    border: 1px dashed var(--danger);
     border-radius: var(--radius-md);
-    color: var(--danger, #d33);
-    background: color-mix(in srgb, var(--danger, #d33) 7%, transparent);
+    color: var(--danger);
+    background: color-mix(in srgb, var(--danger) 7%, transparent);
     display: flex;
     flex-direction: column;
     gap: 6px;
@@ -226,7 +226,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    transition: background 0.12s;
+    transition: background var(--dur-fast);
   }
 
   .page-btn:hover:not(:disabled) {

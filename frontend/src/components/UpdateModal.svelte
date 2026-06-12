@@ -37,7 +37,7 @@
   .backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.5);
+    background: var(--backdrop);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -48,7 +48,7 @@
     background: var(--bg);
     color: var(--fg);
     padding: 24px;
-    border-radius: 14px;
+    border-radius: var(--radius-lg);
     min-width: 360px;
     max-width: 480px;
     box-shadow: var(--shadow-md);
@@ -76,8 +76,8 @@
   .progress {
     width: 100%;
     height: 8px;
-    background: var(--bg-elevated);
-    border-radius: 4px;
+    background: var(--bg-active); /* elevated 는 모달 배경과 근접해 트랙이 안 보임 */
+    border-radius: var(--radius-full);
     overflow: hidden;
     margin: 14px 0 6px;
   }
@@ -85,7 +85,7 @@
   .bar {
     height: 100%;
     background: var(--accent);
-    transition: width 0.2s ease;
+    transition: width var(--dur-slow) ease;
   }
 
   small {
@@ -100,7 +100,7 @@
 
   .primary {
     padding: 7px 14px;
-    border-radius: 8px;
+    border-radius: var(--radius-sm);
     background: var(--accent);
     color: var(--accent-fg);
     font-weight: 500;

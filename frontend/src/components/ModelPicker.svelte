@@ -147,12 +147,12 @@
     gap: 7px;
     width: 100%;
     padding: 7px 10px;
-    border-radius: 8px;
+    border-radius: var(--radius-sm);
     color: var(--fg);
     background: transparent;
     font-size: 12.5px;
     text-align: left;
-    transition: background 0.1s;
+    transition: background var(--dur-fast);
     min-width: 0;
   }
 
@@ -165,7 +165,7 @@
     font-size: 10.5px;
     font-weight: 600;
     padding: 2px 6px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     letter-spacing: 0.03em;
     text-transform: uppercase;
     background: var(--bg-active);
@@ -173,7 +173,7 @@
   }
 
   .provider-chip[data-provider="dtgpt"] {
-    background: color-mix(in srgb, var(--accent) 15%, transparent);
+    background: var(--accent-soft-strong);
     color: var(--accent);
   }
 
@@ -196,7 +196,7 @@
   .chevron {
     flex-shrink: 0;
     color: var(--fg-subtle);
-    transition: transform 0.15s;
+    transition: transform var(--dur-fast);
   }
 
   .picker-btn[aria-expanded="true"] .chevron {
@@ -224,7 +224,7 @@
     flex-direction: column;
     max-height: 320px;
     overflow: hidden;
-    animation: popup-in 0.12s ease;
+    animation: popup-in var(--dur-fast) ease;
   }
 
   @keyframes popup-in {
@@ -262,7 +262,7 @@
     justify-content: center;
     width: 24px;
     height: 24px;
-    border-radius: 5px;
+    border-radius: var(--radius-sm);
     color: var(--fg-muted);
   }
 
@@ -296,7 +296,7 @@
 
   .search-input:focus {
     border-color: var(--accent);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 15%, transparent);
+    box-shadow: var(--focus-ring);
   }
 
   /* ── 모델 리스트 ── */
@@ -315,7 +315,7 @@
     text-align: left;
     font-size: 12.5px;
     color: var(--fg);
-    transition: background 0.08s;
+    transition: background var(--dur-fast);
   }
 
   .model-item:hover {
@@ -324,7 +324,7 @@
 
   .model-item.active {
     color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 8%, transparent);
+    background: var(--accent-soft);
   }
 
   .model-item-name {

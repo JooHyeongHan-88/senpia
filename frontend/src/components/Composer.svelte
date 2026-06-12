@@ -232,9 +232,9 @@
     font-size: 12px;
     font-weight: 500;
     color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 12%, transparent);
-    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
-    border-radius: 20px;
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-border);
+    border-radius: var(--radius-full);
     padding: 3px 4px 3px 9px;
     line-height: 1.4;
   }
@@ -255,12 +255,12 @@
     font-size: 14px;
     line-height: 1;
     opacity: 0.7;
-    transition: opacity 0.1s ease, background 0.1s ease;
+    transition: opacity var(--dur-fast) ease, background var(--dur-fast) ease;
   }
 
   .chip-remove:hover {
     opacity: 1;
-    background: color-mix(in srgb, var(--accent) 18%, transparent);
+    background: var(--accent-soft-strong);
   }
 
   .composer {
@@ -269,14 +269,15 @@
     gap: 8px;
     background: var(--bg-elevated);
     border: 1px solid var(--border-strong);
-    border-radius: 14px;
+    border-radius: var(--radius-lg);
     padding: 10px 10px 10px 14px;
-    transition: border-color 0.12s ease, box-shadow 0.12s ease;
+    box-shadow: var(--shadow-sm);
+    transition: border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
   }
 
   .composer:focus-within {
     border-color: var(--accent);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+    box-shadow: var(--focus-ring);
   }
 
   textarea {
@@ -285,7 +286,7 @@
     border: none;
     outline: none;
     background: transparent;
-    font-size: 14.5px;
+    font-size: 15px; /* 채팅 본문(.markdown 15px)과 톤 일치 */
     line-height: 1.5;
     padding: 4px 0;
     max-height: 200px;
@@ -302,10 +303,10 @@
     justify-content: center;
     width: 34px;
     height: 34px;
-    border-radius: 10px;
+    border-radius: var(--radius-md);
     background: var(--accent);
     color: var(--accent-fg);
-    transition: background 0.12s ease, transform 0.06s ease;
+    transition: background var(--dur-fast) ease, transform 0.06s ease;
   }
 
   .send:hover:not(:disabled) {

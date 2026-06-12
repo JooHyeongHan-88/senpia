@@ -51,8 +51,8 @@
     color: var(--fg-muted);
     font-size: 12px;
     line-height: 1.5;
-    border-radius: 4px;
-    transition: color 0.15s;
+    border-radius: var(--radius-sm);
+    transition: color var(--dur-fast);
   }
 
   .reasoning-header:hover {
@@ -63,7 +63,7 @@
     display: inline-block;
     font-size: 14px;
     line-height: 1;
-    transition: transform 0.18s ease;
+    transition: transform var(--dur-slow) ease;
     transform: rotate(0deg);
   }
 

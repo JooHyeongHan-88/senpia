@@ -37,7 +37,16 @@
     aria-expanded={expanded}
   >
     <span class="chevron" class:open={expanded}>›</span>
-    <span class="agent-icon">🤖</span>
+    <span class="agent-icon" aria-hidden="true">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 8V4H8" />
+        <rect width="16" height="12" x="4" y="8" rx="2" />
+        <path d="M2 14h2" />
+        <path d="M20 14h2" />
+        <path d="M15 13v2" />
+        <path d="M9 13v2" />
+      </svg>
+    </span>
     <span class="agent-name">{seg.agentId}</span>
     {#if isRunning}
       <span class="running-pill">
@@ -84,7 +93,7 @@
   .subagent-step {
     margin: 6px 0;
     border-left: 2px solid var(--border);
-    border-radius: 0 6px 6px 0;
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
     overflow: hidden;
   }
 
@@ -108,7 +117,7 @@
     color: var(--fg-muted);
     font-size: 12px;
     text-align: left;
-    transition: background 0.13s;
+    transition: background var(--dur-fast);
   }
 
   .subagent-header:hover {
@@ -120,7 +129,7 @@
     font-size: 14px;
     line-height: 1;
     flex-shrink: 0;
-    transition: transform 0.18s ease;
+    transition: transform var(--dur-slow) ease;
     color: var(--fg-subtle);
   }
 
@@ -129,9 +138,11 @@
   }
 
   .agent-icon {
-    font-size: 13px;
+    display: inline-flex;
+    align-items: center;
     line-height: 1;
     flex-shrink: 0;
+    color: var(--accent);
   }
 
   .agent-name {
@@ -148,9 +159,9 @@
     font-size: 10px;
     font-weight: 600;
     color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 12%, transparent);
-    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
-    border-radius: 10px;
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-border);
+    border-radius: var(--radius-full);
     padding: 1px 7px 1px 5px;
   }
 
@@ -160,7 +171,7 @@
     color: var(--color-success);
     background: color-mix(in srgb, var(--color-success) 10%, transparent);
     border: 1px solid color-mix(in srgb, var(--color-success) 25%, transparent);
-    border-radius: 10px;
+    border-radius: var(--radius-full);
     padding: 1px 7px;
   }
 
@@ -199,11 +210,11 @@
     color: var(--fg-muted);
     background: color-mix(in srgb, var(--border) 40%, transparent);
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     padding: 2px 7px 2px 6px;
     white-space: nowrap;
     letter-spacing: 0.02em;
-    animation: skill-pop 0.18s ease-out both;
+    animation: skill-pop var(--dur-slow) ease-out both;
   }
 
   .agent-skill-icon {
@@ -245,7 +256,7 @@
     display: inline-block;
     width: 8px;
     height: 8px;
-    border: 1.5px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    border: 1.5px solid var(--accent-border);
     border-top-color: var(--accent);
     border-radius: 50%;
     animation: tool-spin 0.7s linear infinite;

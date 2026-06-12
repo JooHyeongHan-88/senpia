@@ -266,7 +266,7 @@
   .overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.45);
+    background: var(--backdrop);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -312,8 +312,8 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 30px;
-    height: 30px;
+    width: 28px;
+    height: 28px;
     border-radius: var(--radius-sm);
     color: var(--fg-muted);
     flex-shrink: 0;
@@ -398,14 +398,14 @@
     background: var(--bg);
     color: var(--fg);
     font-size: 13.5px;
-    transition: border-color 0.12s;
+    transition: border-color var(--dur-fast);
     outline: none;
   }
 
   .input:focus,
   .select:focus {
     border-color: var(--accent);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+    box-shadow: var(--focus-ring);
   }
 
   .input:disabled,
@@ -451,12 +451,12 @@
     resize: vertical;
     min-height: 100px;
     outline: none;
-    transition: border-color 0.12s;
+    transition: border-color var(--dur-fast);
   }
 
   .textarea:focus {
     border-color: var(--accent);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+    box-shadow: var(--focus-ring);
   }
 
   .textarea:disabled {
@@ -562,8 +562,8 @@
     font-size: 13px;
     font-weight: 500;
     transition:
-      background 0.1s,
-      border-color 0.1s;
+      background var(--dur-fast),
+      border-color var(--dur-fast);
     white-space: nowrap;
     cursor: pointer;
   }

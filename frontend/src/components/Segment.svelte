@@ -28,7 +28,7 @@
 {#if seg.kind === "text"}
   {#if seg.content}
     <div
-      class="text-seg"
+      class="text-seg markdown"
       class:fallback={seg.isFallback}
       class:recovered={seg.isRecovered}
     >{@html html}</div>
@@ -58,7 +58,7 @@
     background-color: color-mix(in srgb, var(--danger) 5%, transparent);
     border: 1px dashed var(--danger);
     padding: 12px;
-    border-radius: 8px;
+    border-radius: var(--radius-sm);
     margin-top: 8px;
   }
 
@@ -67,7 +67,7 @@
     background-color: color-mix(in srgb, var(--color-success) 8%, transparent);
     border: 1px dashed color-mix(in srgb, var(--color-success) 50%, transparent);
     padding: 12px;
-    border-radius: 8px;
+    border-radius: var(--radius-sm);
     margin-top: 8px;
   }
 </style>

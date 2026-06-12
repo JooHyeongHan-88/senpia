@@ -14,8 +14,7 @@
   import { rewindToMessage } from "../lib/chatActions.svelte.js";
   import { formatAbsoluteTime, formatDuration } from "../lib/format.js";
   import TurnStatus from "./TurnStatus.svelte";
-
-  const ARTIFACT_ICON = { image: "🖼️", chart: "📊", data: "🗂️" };
+  import ArtifactIcon from "./ArtifactIcon.svelte";
 
   let { message } = $props();
 
@@ -148,7 +147,12 @@
 
       <!-- ── ESC 중지 표시 ── -->
       {#if message.isStopped}
-        <div class="stopped-footer" role="status">⏹ 응답이 중지되었습니다</div>
+        <div class="stopped-footer" role="status">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <rect x="6" y="6" width="12" height="12" rx="2" />
+          </svg>
+          응답이 중지되었습니다
+        </div>
       {/if}
 
       <!-- ── 아티팩트 칩 ── -->
@@ -161,7 +165,7 @@
                 onclick={() => openArtifact(chip.id)}
                 title={chip.label}
               >
-                {ARTIFACT_ICON[chip.kind] ?? "📄"}
+                <ArtifactIcon kind={chip.kind} size={13} />
                 <span class="artifact-chip-label">{chip.label}</span>
                 <svg
                   class="artifact-chip-arrow"
@@ -252,13 +256,13 @@
     background: var(--user-bubble);
     color: var(--fg);
     padding: 10px 14px;
-    border-radius: 16px 16px 4px 16px;
+    border-radius: var(--radius-lg) var(--radius-lg) var(--radius-sm) var(--radius-lg);
   }
 
   .user-content {
     white-space: pre-wrap;
     word-wrap: break-word;
-    font-size: 14px;
+    font-size: 15px; /* 채팅 본문(.markdown 15px)과 톤 일치 */
     line-height: 1.6;
   }
 
@@ -276,8 +280,8 @@
 
   .user-chip {
     color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 15%, transparent);
-    border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+    background: var(--accent-soft-strong);
+    border-color: var(--accent-border);
   }
 
   .skill-chip {
@@ -287,13 +291,13 @@
     font-size: 11px;
     font-weight: 500;
     color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-    border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
-    border-radius: 20px;
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-border);
+    border-radius: var(--radius-full);
     padding: 2px 9px 2px 7px;
     line-height: 1.6;
     white-space: nowrap;
-    animation: skill-pop 0.18s ease-out both;
+    animation: skill-pop var(--dur-slow) ease-out both;
   }
 
   .skill-icon {
@@ -326,18 +330,18 @@
     font-size: 12px;
     font-weight: 500;
     color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 8%, transparent);
-    border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-border);
     border-radius: var(--radius-sm);
     padding: 4px 10px 4px 8px;
     cursor: pointer;
-    transition: background 0.13s;
+    transition: background var(--dur-fast);
     white-space: nowrap;
     max-width: 220px;
   }
 
   .artifact-chip:hover {
-    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    background: var(--accent-soft-strong);
   }
 
   /* 참조 삽입 보조 버튼 — 메인 칩과 붙은 작은 '@' 버튼 */
@@ -354,16 +358,16 @@
     font-size: 13px;
     font-weight: 700;
     color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 8%, transparent);
-    border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-border);
     border-left: none;
     border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
     cursor: pointer;
-    transition: background 0.13s;
+    transition: background var(--dur-fast);
   }
 
   .artifact-chip-ref:hover {
-    background: color-mix(in srgb, var(--accent) 20%, transparent);
+    background: var(--accent-soft-strong);
   }
 
   .artifact-chip-label {
@@ -380,6 +384,9 @@
 
   /* ── 중지 footer ── */
   .stopped-footer {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
     margin-top: 8px;
     font-size: 11.5px;
     color: var(--fg-subtle);
@@ -394,7 +401,7 @@
     font-size: 11px;
     color: var(--fg-subtle);
     opacity: 0;
-    transition: opacity 0.12s ease;
+    transition: opacity var(--dur-fast) ease;
     pointer-events: none;
   }
 
@@ -414,11 +421,11 @@
     justify-content: center;
     width: 20px;
     height: 20px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     color: var(--fg-subtle);
     background: transparent;
     cursor: pointer;
-    transition: background 0.12s, color 0.12s;
+    transition: background var(--dur-fast), color var(--dur-fast);
   }
 
   .rewind-btn:hover:not(:disabled) {
@@ -456,7 +463,7 @@
     background-color: color-mix(in srgb, var(--danger) 5%, transparent);
     border: 1px dashed var(--danger);
     padding: 12px;
-    border-radius: 8px;
+    border-radius: var(--radius-sm);
     margin-top: 8px;
   }
 
@@ -467,7 +474,7 @@
     background: var(--bg-elevated);
     border: 1px solid var(--border);
     padding: 5px 10px;
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     display: inline-block;
     font-family: var(--font-mono);
   }
@@ -477,7 +484,7 @@
     padding: 8px 12px;
     border-left: 2px solid var(--border);
     background: var(--bg-elevated);
-    border-radius: 0 6px 6px 0;
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
     font-size: 12px;
     color: var(--fg-muted);
   }

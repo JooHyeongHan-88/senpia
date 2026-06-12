@@ -34,14 +34,14 @@
     padding: 10px 14px;
     background: var(--accent);
     color: var(--accent-fg);
-    border-radius: 10px;
+    border-radius: var(--radius-md);
     font-size: 13px;
     box-shadow: var(--shadow-md);
   }
 
   .primary {
     padding: 5px 12px;
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     background: var(--bg);
     color: var(--accent);
     font-weight: 600;
@@ -53,7 +53,7 @@
 
   .ghost {
     padding: 5px 10px;
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     background: transparent;
     color: var(--accent-fg);
     border: 1px solid color-mix(in srgb, var(--accent-fg) 50%, transparent);

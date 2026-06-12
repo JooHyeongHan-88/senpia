@@ -93,7 +93,7 @@
     padding: 8px 12px;
     gap: 2px;
     border-radius: 0;
-    transition: background 0.08s ease;
+    transition: background var(--dur-fast) ease;
   }
 
   .item:hover,

@@ -101,7 +101,13 @@
             >
               {#if failedSet.has(idx)}
                 <div class="card-error">
-                  <span class="error-icon">🖼️</span>
+                  <span class="error-icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <rect x="3" y="3" width="18" height="18" rx="2" />
+                      <circle cx="9" cy="9" r="2" />
+                      <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+                    </svg>
+                  </span>
                   <span>이미지를 불러올 수 없습니다.</span>
                   <small>{item.src}</small>
                 </div>
@@ -200,12 +206,12 @@
   .card-btn {
     background: transparent;
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-md);
     padding: 0;
     cursor: zoom-in;
     width: 100%;
     overflow: hidden;
-    transition: border-color 0.12s, box-shadow 0.12s;
+    transition: border-color var(--dur-fast), box-shadow var(--dur-fast);
     line-height: 0;
   }
 
@@ -239,14 +245,13 @@
     justify-content: center;
     gap: 6px;
     padding: 32px 16px;
-    color: var(--color-danger, #e53e3e);
+    color: var(--danger);
     font-size: 12px;
     line-height: 1.5;
   }
 
   .card-error .error-icon {
-    font-size: 24px;
-    filter: grayscale(0.3);
+    display: inline-flex;
   }
 
   .card-error small {

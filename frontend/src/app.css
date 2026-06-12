@@ -1,28 +1,42 @@
 /* ===== Theme tokens ===== */
+/* 웜 뉴트럴 + 테라코타 팔레트 (Claude Desktop 벤치마킹). */
 :root {
-  --bg: #ffffff;
-  --bg-elevated: #f7f7f8;
-  --bg-hover: #ececef;
-  --bg-active: #e6e6ea;
-  --fg: #1f2328;
-  --fg-muted: #6e7781;
-  --fg-subtle: #8b949e;
-  --border: #e1e4e8;
-  --border-strong: #d0d7de;
-  --accent: #2563eb;
-  --accent-hover: #1d4ed8;
+  --bg: #faf9f5;
+  --bg-elevated: #f0eee6;
+  --bg-hover: #e8e5db;
+  --bg-active: #e0dcd0;
+  --fg: #1f1e1d;
+  --fg-muted: #6b6a64;
+  --fg-subtle: #9c9a92;
+  --border: #e5e2d8;
+  --border-strong: #d2cfc4;
+  --accent: #c96442;
+  --accent-hover: #b5532f;
   --accent-fg: #ffffff;
-  --user-bubble: #eef4ff;
-  --code-bg: #f6f8fa;
-  --code-inline-bg: #eff1f3;
-  --danger: #d1242f;
-  --danger-bg: #ffebe9;
-  --color-success: #22863a;
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
+  --user-bubble: #f0eee6;
+  --code-bg: #f5f3ec;
+  --code-inline-bg: #ece9e0;
+  --danger: #bf4133;
+  --danger-bg: #f8e4de;
+  --color-success: #44803c; /* 10px 필 텍스트가 크림 배경 위 4.5:1 넘도록 어둡게 */
+  --shadow-sm: 0 1px 2px rgba(40, 30, 20, 0.05);
+  --shadow-md: 0 4px 12px rgba(40, 30, 20, 0.09);
+  --shadow-lg: 0 20px 60px rgba(40, 30, 20, 0.25);
+  --backdrop: rgba(38, 33, 28, 0.5);
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-full: 999px;
+
+  /* 액센트 틴트 — :root 와 [data-theme="dark"] 가 같은 html 요소이므로
+     --accent 캐스케이드가 그대로 반영된다. 테마별 재선언 불필요. */
+  --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent);
+  --accent-soft-strong: color-mix(in srgb, var(--accent) 18%, transparent);
+  --accent-border: color-mix(in srgb, var(--accent) 30%, transparent);
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+
+  --dur-fast: 0.12s;
+  --dur-slow: 0.18s;
 
   --font-sans:
     -apple-system, BlinkMacSystemFont, "Segoe UI", "Pretendard", "Noto Sans KR", Roboto,
@@ -30,31 +44,35 @@
   --font-mono:
     ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono",
     monospace;
+  --font-display:
+    "Noto Serif KR", Georgia, "Nanum Myeongjo", Batang, AppleMyungjo, serif;
 
   color-scheme: light;
 }
 
 [data-theme="dark"] {
-  --bg: #1a1a1a;
-  --bg-elevated: #232325;
-  --bg-hover: #2c2c2f;
-  --bg-active: #353539;
-  --fg: #ececec;
-  --fg-muted: #a3a3a8;
-  --fg-subtle: #7c7c82;
-  --border: #2e2e32;
-  --border-strong: #3f3f44;
-  --accent: #60a5fa;
-  --accent-hover: #3b82f6;
-  --accent-fg: #0b1220;
-  --user-bubble: #2a3a5a;
-  --code-bg: #1e1e21;
-  --code-inline-bg: #2a2a2e;
-  --danger: #ff6b6b;
-  --danger-bg: #3a1f23;
-  --color-success: #7ee787;
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --bg: #262624;
+  --bg-elevated: #30302e;
+  --bg-hover: #3a3a37;
+  --bg-active: #434340;
+  --fg: #edebe6;
+  --fg-muted: #b3b0a8;
+  --fg-subtle: #84827a;
+  --border: #3e3d39;
+  --border-strong: #4d4b46;
+  --accent: #d97757;
+  --accent-hover: #e08b6d; /* 다크는 hover 시 밝게 */
+  --accent-fg: #ffffff;
+  --user-bubble: #393936;
+  --code-bg: #1e1e1c;
+  --code-inline-bg: #383631;
+  --danger: #e5705c;
+  --danger-bg: #452822;
+  --color-success: #7ba876;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.6);
+  --backdrop: rgba(0, 0, 0, 0.6);
 
   color-scheme: dark;
 }
@@ -102,6 +120,12 @@ button:disabled {
   opacity: 0.5;
 }
 
+/* 키보드 포커스 링 — :where() 0-특이성이라 컴포넌트의 명시적 outline/focus 스타일이 항상 이긴다 */
+:where(button, a, input, select, textarea, [role="button"], [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 input,
 textarea {
   font-family: inherit;
@@ -134,7 +158,7 @@ textarea {
 
 /* ===== Markdown (assistant 메시지 본문) ===== */
 .markdown {
-  font-size: 14px;
+  font-size: 15px; /* 채팅 본문만 1px 상향 — UI 크롬(body 14px)과 분리 */
   line-height: 1.7;
   word-wrap: break-word;
 }
@@ -158,6 +182,13 @@ textarea {
   margin: 1em 0 0.5em;
   font-weight: 600;
   line-height: 1.3;
+}
+
+/* 상위 헤딩만 세리프 디스플레이체 — h3/h4 는 산스 유지 */
+.markdown h1,
+.markdown h2 {
+  font-family: var(--font-display);
+  letter-spacing: -0.01em;
 }
 
 .markdown h1 {

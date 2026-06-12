@@ -17,8 +17,7 @@
   import ArtifactChart from "./ArtifactChart.svelte";
   import ArtifactMarkdown from "./ArtifactMarkdown.svelte";
   import ArtifactData from "./ArtifactData.svelte";
-
-  const KIND_ICON = { image: "🖼️", chart: "📊", markdown: "📝", data: "🗂️" };
+  import ArtifactIcon from "./ArtifactIcon.svelte";
 
   // 활성 세션의 모든 메시지에서 칩을 평탄화 → payload 가 메시지에 영속되어 있으므로
   // 세션 복귀 후에도 동일한 칩 목록을 그대로 복원할 수 있다.
@@ -99,8 +98,8 @@
     <div class="panel-header">
       <span class="panel-title">
         {#if activeArtifact}
-          {KIND_ICON[activeArtifact.kind] ?? "📄"}
-          {activeArtifact.label}
+          <ArtifactIcon kind={activeArtifact.kind} size={14} />
+          <span class="panel-title-text">{activeArtifact.label}</span>
         {:else}
           아티팩트
         {/if}
@@ -164,7 +163,7 @@
             onclick={() => openArtifact(artifact.id)}
             title={artifact.label}
           >
-            {KIND_ICON[artifact.kind] ?? "📄"}
+            <ArtifactIcon kind={artifact.kind} size={12} />
             <span class="tab-label">{artifact.label}</span>
           </button>
         {/each}
@@ -201,7 +200,7 @@
     background: var(--bg);
     border-left: 1px solid var(--border);
     box-shadow: -4px 0 16px rgba(0, 0, 0, 0.06);
-    animation: panel-slide-in 0.18s ease-out;
+    animation: panel-slide-in var(--dur-slow) ease-out;
     overflow: hidden;
     flex-shrink: 0;
     position: relative;
@@ -221,13 +220,13 @@
     cursor: ew-resize;
     z-index: 10;
     background: transparent;
-    transition: background 0.12s;
+    transition: background var(--dur-fast);
     touch-action: none;
   }
 
   .resize-handle:hover,
   .artifact-panel.resizing .resize-handle {
-    background: color-mix(in srgb, var(--accent) 35%, transparent);
+    background: var(--accent-border);
   }
 
   @keyframes panel-slide-in {
@@ -253,13 +252,21 @@
   }
 
   .panel-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     font-size: 13px;
     font-weight: 600;
     color: var(--fg);
     overflow: hidden;
-    text-overflow: ellipsis;
     white-space: nowrap;
     flex: 1;
+    min-width: 0;
+  }
+
+  .panel-title-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .panel-header-actions {
@@ -273,32 +280,32 @@
     font-size: 12px;
     font-weight: 600;
     color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-    border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-border);
     border-radius: var(--radius-sm);
     padding: 3px 9px;
     cursor: pointer;
     white-space: nowrap;
-    transition: background 0.12s;
+    transition: background var(--dur-fast);
   }
 
   .ref-btn:hover {
-    background: color-mix(in srgb, var(--accent) 20%, transparent);
+    background: var(--accent-soft-strong);
   }
 
   .folder-btn {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 26px;
-    height: 26px;
+    width: 28px;
+    height: 28px;
     border: none;
     background: transparent;
     color: var(--fg-muted);
     cursor: pointer;
     border-radius: var(--radius-sm);
     flex-shrink: 0;
-    transition: background 0.12s, color 0.12s;
+    transition: background var(--dur-fast), color var(--dur-fast);
   }
 
   .folder-btn:hover {
@@ -325,15 +332,15 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 26px;
-    height: 26px;
+    width: 28px;
+    height: 28px;
     border: none;
     background: transparent;
     color: var(--fg-muted);
     cursor: pointer;
     border-radius: var(--radius-sm);
     flex-shrink: 0;
-    transition: background 0.12s, color 0.12s;
+    transition: background var(--dur-fast), color var(--dur-fast);
     margin-left: 8px;
   }
 
@@ -365,7 +372,7 @@
     color: var(--fg-muted);
     cursor: pointer;
     white-space: nowrap;
-    transition: background 0.12s;
+    transition: background var(--dur-fast);
     max-width: 140px;
   }
 

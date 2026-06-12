@@ -1,5 +1,6 @@
 <script>
   import { onMount, onDestroy } from "svelte";
+  import { isEmptySession } from "./lib/state.svelte.js";
   import { initApp, teardown } from "./lib/chatActions.svelte.js";
   import { loadSettingsForInit } from "./lib/settingsActions.svelte.js";
 
@@ -21,6 +22,8 @@
   onDestroy(() => {
     teardown();
   });
+
+  let hero = $derived(isEmptySession());
 </script>
 
 <div class="app">
@@ -29,6 +32,10 @@
     <TopBar />
     <ChatArea />
     <Composer />
+    {#if hero}
+      <!-- 컴포저 아래 여백 흡수 — 인사말+컴포저 쌍이 중앙 약간 위에 떠 보이게 -->
+      <div class="hero-spacer"></div>
+    {/if}
   </main>
   <ArtifactPanel />
 </div>
@@ -52,5 +59,11 @@
     flex-direction: column;
     height: 100%;
     background: var(--bg);
+  }
+
+  /* ChatArea(flex:1)와 비율 분배 — 1 : 0.85 로 쌍을 중앙보다 살짝 위에 배치 */
+  .hero-spacer {
+    flex: 0.85 1 0;
+    min-height: 0;
   }
 </style>

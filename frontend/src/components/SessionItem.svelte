@@ -96,12 +96,12 @@
     align-items: center;
     gap: 8px;
     padding: 8px 10px;
-    border-radius: 8px;
+    border-radius: var(--radius-sm);
     cursor: pointer;
     user-select: none;
     color: var(--fg);
     position: relative;
-    transition: background 0.12s ease;
+    transition: background var(--dur-fast) ease;
   }
 
   .row:hover {
@@ -125,7 +125,7 @@
     display: flex;
     gap: 2px;
     opacity: 0;
-    transition: opacity 0.12s ease;
+    transition: opacity var(--dur-fast) ease;
   }
 
   .row:hover .actions,
@@ -139,7 +139,7 @@
     justify-content: center;
     width: 24px;
     height: 24px;
-    border-radius: 5px;
+    border-radius: var(--radius-sm);
     color: var(--fg-muted);
   }
 
@@ -157,9 +157,10 @@
     flex: 1;
     background: var(--bg);
     border: 1px solid var(--accent);
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     padding: 4px 8px;
     outline: none;
+    box-shadow: var(--focus-ring);
     font-size: 13.5px;
     min-width: 0;
   }

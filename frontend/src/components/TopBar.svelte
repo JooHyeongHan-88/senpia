@@ -97,7 +97,7 @@
     height: 32px;
     align-items: center;
     justify-content: center;
-    border-radius: 7px;
+    border-radius: var(--radius-sm);
     color: var(--fg-muted);
   }
 
@@ -116,7 +116,7 @@
   .title-btn {
     max-width: 100%;
     padding: 4px 8px;
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     font-size: 14px;
     font-weight: 600;
     color: var(--fg);
@@ -136,11 +136,11 @@
     height: 32px;
     align-items: center;
     justify-content: center;
-    border-radius: 7px;
+    border-radius: var(--radius-sm);
     color: var(--fg-muted);
     background: transparent;
     flex-shrink: 0;
-    transition: background 0.12s, color 0.12s;
+    transition: background var(--dur-fast), color var(--dur-fast);
   }
 
   .panel-toggle:hover {
@@ -149,23 +149,24 @@
   }
 
   .panel-toggle.active {
-    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    background: var(--accent-soft);
     color: var(--accent);
   }
 
   .panel-toggle.active:hover {
-    background: color-mix(in srgb, var(--accent) 22%, transparent);
+    background: var(--accent-soft-strong);
   }
 
   .title-input {
     flex: 1;
     background: var(--bg);
     border: 1px solid var(--accent);
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     padding: 4px 8px;
     font-size: 14px;
     font-weight: 600;
     outline: none;
+    box-shadow: var(--focus-ring);
     max-width: 480px;
   }
 

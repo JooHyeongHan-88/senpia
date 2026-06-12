@@ -38,7 +38,12 @@
 
 <div class="ask-card" class:answered={askUser.answered}>
   {#if askUser.tool_name}
-    <div class="tool-label">🔧 {askUser.tool_name} 실행을 위한 질문</div>
+    <div class="tool-label">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+      </svg>
+      {askUser.tool_name} 실행을 위한 질문
+    </div>
   {/if}
 
   <p class="question">{askUser.question}</p>
@@ -83,7 +88,7 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    transition: opacity 0.2s;
+    transition: opacity var(--dur-slow);
   }
 
   .ask-card.answered {
@@ -91,6 +96,9 @@
   }
 
   .tool-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
     font-size: 11px;
     color: var(--fg-subtle);
     font-family: var(--font-mono);
@@ -116,18 +124,18 @@
     font-size: 12px;
     font-weight: 500;
     color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
-    border-radius: 20px;
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-border);
+    border-radius: var(--radius-full);
     padding: 4px 12px;
     cursor: pointer;
     transition:
-      background 0.15s,
-      border-color 0.15s;
+      background var(--dur-fast),
+      border-color var(--dur-fast);
   }
 
   .option-btn:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--accent) 18%, transparent);
+    background: var(--accent-soft-strong);
     border-color: color-mix(in srgb, var(--accent) 50%, transparent);
   }
 
