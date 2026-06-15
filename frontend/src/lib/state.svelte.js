@@ -39,11 +39,9 @@ export const ui = $state({
   modelPickerOpen: false,
 
   // 슬래시 커맨드용 — 부팅 시 GET /api/skills 결과 캐시.
+  // 스킬은 입력창 inline pill(parts {type:"skill"})로 삽입되어 전송 시 force_skills 로 추출된다.
   /** @type {Array<{ name: string, description: string, trigger: string[], priority: number }>} */
   availableSkills: [],
-  // 현재 Composer 에 부착된 skill 이름 목록 (전송 시 force_skills 로 백엔드 전달, 직후 리셋).
-  /** @type {string[]} */
-  composerSkills: [],
 
   // 입력창(contenteditable)에 커서 위치로 산출물 인용 pill 을 삽입하라는 일회용 신호.
   // artifactActions.insertArtifactReference 가 채우면 Composer 의 $effect 가 소비 후 null 로 비운다.

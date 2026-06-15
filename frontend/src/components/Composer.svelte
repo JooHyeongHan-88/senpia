@@ -7,7 +7,7 @@
   // (Svelte 반응성과 DOM 변형 충돌 방지). 인용은 contenteditable=false pill atom 으로 인라인 삽입.
   let editorEl = $state(null);
   let highlight = $state(0);
-  // 슬래시 picker 판정·빈 상태 판정용 평문 거울. 입력/삽입/삭제 때 editorEl 에서 동기화.
+  // 빈 상태 판정용 평문 거울. 입력/삽입/삭제 때 editorEl 에서 동기화.
   let plainText = $state("");
   let hasPills = $state(false);
   // 에디터 밖 버튼(@참조)이 포커스를 가져가도 caret 위치를 복원하려고 보존하는 range.
@@ -16,19 +16,24 @@
   let lastInsertNonce = 0;
   let lastSetNonce = 0;
 
-  let pickerOpen = $derived(plainText.startsWith("/"));
-  let pickerQuery = $derived(pickerOpen ? plainText.slice(1) : "");
+  // 슬래시 토큰 — caret 직전의 "/query" (텍스트 중간 포함). updateSlashToken 이 채운다.
+  let slashActive = $state(false);
+  let slashQuery = $state("");
+  let slashSuppressed = $state(null); // Esc 로 닫은 토큰 (재타이핑/이동 시 해제)
+  // 토큰의 DOM 위치 (비반응 — pickSkill 이 "/query" 를 pill 로 교체할 때 사용).
+  let slashRange = null; // { node, start, end }
+
+  let pickerOpen = $derived(slashActive && !ui.streaming && slashQuery !== slashSuppressed);
+  let pickerQuery = $derived(slashActive ? slashQuery : "");
   let filteredSkills = $derived(filterSkills(ui.availableSkills, pickerQuery));
 
   let isEmpty = $derived(plainText.trim().length === 0 && !hasPills);
-  let canSend = $derived((!isEmpty || ui.composerSkills.length > 0) && !ui.streaming);
+  let canSend = $derived(!isEmpty && !ui.streaming);
 
   let placeholder = $derived(
     ui.streaming
       ? "응답 중…  ·  ESC 로 중지"
-      : ui.composerSkills.length > 0
-        ? "본문을 입력하세요 (Backspace 로 스킬 제거)"
-        : "메시지를 입력하세요  ·  / 로 스킬 호출",
+      : "메시지를 입력하세요  ·  / 로 스킬 호출",
   );
 
   function filterSkills(all, q) {
@@ -43,7 +48,7 @@
   function syncEditorState() {
     if (!editorEl) return;
     plainText = editorEl.textContent ?? "";
-    hasPills = !!editorEl.querySelector(".ref-pill");
+    hasPills = !!editorEl.querySelector(".ref-pill, .skill-pill");
   }
 
   function saveRange() {
@@ -53,6 +58,44 @@
     if (editorEl && editorEl.contains(r.commonAncestorContainer)) {
       savedRange = r.cloneRange();
     }
+  }
+
+  // caret 직전의 "/query" 슬래시 토큰을 찾는다. 토큰은 줄머리/공백 뒤 "/" 로 시작하고
+  // 공백·"/" 를 포함하지 않아야 한다 (텍스트 중간에서도 동작 — Claude Desktop 류).
+  function detectSlashToken() {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0 || !sel.isCollapsed) return null;
+    const r = sel.getRangeAt(0);
+    const node = r.startContainer;
+    if (!editorEl || node.nodeType !== Node.TEXT_NODE || !editorEl.contains(node)) {
+      return null;
+    }
+    const off = r.startOffset;
+    const before = node.textContent.slice(0, off);
+    const m = before.match(/(?:^|\s)\/([^\s/]*)$/);
+    if (!m) return null;
+    const query = m[1];
+    return { node, start: off - query.length - 1, end: off, query };
+  }
+
+  function updateSlashToken() {
+    const tok = detectSlashToken();
+    if (tok) {
+      slashRange = { node: tok.node, start: tok.start, end: tok.end };
+      slashQuery = tok.query;
+      slashActive = true;
+    } else {
+      slashRange = null;
+      slashActive = false;
+      slashQuery = "";
+      slashSuppressed = null; // 토큰이 사라지면 억제 해제
+    }
+  }
+
+  // caret 위치 보존 + 슬래시 토큰 재평가를 한 번에 (keyup/mouseup/blur/input 공용).
+  function refreshCaret() {
+    saveRange();
+    updateSlashToken();
   }
 
   function focusEnd() {
@@ -111,6 +154,57 @@
     syncEditorState();
   }
 
+  // 스킬 pill — "/" 명령으로 삽입되는 inline atom (ref pill 과 시각·동작 일관, 별도 톤).
+  function buildSkillPill(name) {
+    const span = document.createElement("span");
+    span.className = "skill-pill";
+    span.contentEditable = "false";
+    span.dataset.skill = name;
+    span.title = `스킬: ${name}`;
+    span.innerHTML = '<span class="skill-pill-icon">✦</span>';
+    const lbl = document.createElement("span");
+    lbl.className = "skill-pill-label";
+    lbl.textContent = name;
+    span.appendChild(lbl);
+    return span;
+  }
+
+  // "/query" 토큰 자리를 스킬 pill 로 교체 (토큰 위치 없으면 caret 위치에 삽입).
+  function insertSkillPill(name) {
+    if (!editorEl) return;
+    editorEl.focus();
+    const sel = window.getSelection();
+    let range;
+    if (slashRange && editorEl.contains(slashRange.node)) {
+      range = document.createRange();
+      range.setStart(slashRange.node, slashRange.start);
+      range.setEnd(slashRange.node, slashRange.end);
+    } else if (savedRange && editorEl.contains(savedRange.commonAncestorContainer)) {
+      range = savedRange.cloneRange();
+    } else {
+      range = document.createRange();
+      range.selectNodeContents(editorEl);
+      range.collapse(false);
+    }
+    sel.removeAllRanges();
+    sel.addRange(range);
+    range.deleteContents();
+    const pill = buildSkillPill(name);
+    const space = document.createTextNode(" ");
+    range.insertNode(space);
+    range.insertNode(pill);
+    range.setStartAfter(space);
+    range.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    savedRange = range.cloneRange();
+    slashRange = null;
+    slashActive = false;
+    slashQuery = "";
+    slashSuppressed = null;
+    syncEditorState();
+  }
+
   // caret 직전에 붙어 있는 pill 엘리먼트를 반환 (없으면 null) — 백스페이스 통째 삭제용.
   function pillBeforeCaret() {
     const sel = window.getSelection();
@@ -120,18 +214,31 @@
     if (node.nodeType === Node.TEXT_NODE) {
       if (r.startOffset > 0) return null; // 텍스트 중간 — 일반 글자 삭제
       const prev = node.previousSibling;
-      return _isPill(prev) ? prev : null;
+      return _isAtomPill(prev) ? prev : null;
     }
     const child = node.childNodes[r.startOffset - 1];
-    return _isPill(child) ? child : null;
+    return _isAtomPill(child) ? child : null;
   }
 
-  function _isPill(node) {
+  function _isRefPill(node) {
     return (
       node &&
       node.nodeType === Node.ELEMENT_NODE &&
       node.classList?.contains("ref-pill")
     );
+  }
+
+  function _isSkillPill(node) {
+    return (
+      node &&
+      node.nodeType === Node.ELEMENT_NODE &&
+      node.classList?.contains("skill-pill")
+    );
+  }
+
+  // ref / skill 어느 쪽이든 통째 삭제·직렬화 대상이 되는 inline atom.
+  function _isAtomPill(node) {
+    return _isRefPill(node) || _isSkillPill(node);
   }
 
   // ── parts 직렬화 (text 노드 + pill atom + br → 순서 있는 배열) ──
@@ -148,8 +255,10 @@
         if (n.nodeType === Node.TEXT_NODE) {
           pushText(n.textContent.replace(/ /g, " "));
         } else if (n.nodeType === Node.ELEMENT_NODE) {
-          if (_isPill(n)) {
+          if (_isRefPill(n)) {
             parts.push({ type: "ref", path: n.dataset.path, label: n.dataset.label });
+          } else if (_isSkillPill(n)) {
+            parts.push({ type: "skill", name: n.dataset.skill });
           } else if (n.tagName === "BR") {
             pushText("\n");
           } else {
@@ -176,6 +285,9 @@
       if (p.type === "ref" && p.path) {
         editorEl.appendChild(buildPill(p.path, p.label || p.path));
         editorEl.appendChild(document.createTextNode(" "));
+      } else if (p.type === "skill" && p.name) {
+        editorEl.appendChild(buildSkillPill(p.name));
+        editorEl.appendChild(document.createTextNode(" "));
       } else if (p.type === "text") {
         editorEl.appendChild(document.createTextNode(p.value ?? ""));
       }
@@ -185,25 +297,18 @@
   }
 
   // ── 액션 ────────────────────────────────────────────────────────────
+  // 슬래시 picker 에서 스킬 선택 → "/query" 토큰을 inline 스킬 pill 로 교체.
+  // (@인용 pill 과 동일하게 본문 텍스트 흐름 안에 들어가며, 전송 시 force_skills 로 추출됨)
   function pickSkill(name) {
     if (!name) return;
-    if (!ui.composerSkills.includes(name)) {
-      ui.composerSkills = [...ui.composerSkills, name];
-    }
-    clearEditor(); // "/query" 토큰 제거 — 본문은 사용자가 다시 작성한다고 가정 (단순 정책).
+    insertSkillPill(name);
     highlight = 0;
-    focusEnd();
-  }
-
-  function removeSkill(name) {
-    ui.composerSkills = ui.composerSkills.filter((s) => s !== name);
-    editorEl?.focus();
   }
 
   async function submit() {
     if (!canSend) return;
-    // 빈 본문 + 스킬만 있는 경우 빈 parts 로 전송 (skill 이름이 본문 대체).
-    const parts = isEmpty ? [] : readParts();
+    // 스킬 pill 포함 — readParts 가 {type:"skill"} 로 직렬화, sendMessage 가 force_skills 추출.
+    const parts = readParts();
     clearEditor();
     await sendMessage(parts);
   }
@@ -219,14 +324,14 @@
     r.collapse(true);
     sel.removeAllRanges();
     sel.addRange(r);
-    saveRange();
     syncEditorState();
+    refreshCaret();
   }
 
   function onInput() {
     highlight = 0;
     syncEditorState();
-    saveRange();
+    refreshCaret();
   }
 
   function onPaste(e) {
@@ -243,8 +348,8 @@
     r.collapse(true);
     sel.removeAllRanges();
     sel.addRange(r);
-    saveRange();
     syncEditorState();
+    refreshCaret();
   }
 
   function onKey(e) {
@@ -267,7 +372,7 @@
       }
       if (e.key === "Escape") {
         e.preventDefault();
-        clearEditor(); // 패널 닫기 = "/" 토큰 제거.
+        slashSuppressed = slashQuery; // picker 만 닫음 — "/query" 텍스트는 그대로 둔다.
         return;
       }
       if (e.key === "Tab") {
@@ -289,13 +394,7 @@
           after.remove();
         }
         syncEditorState();
-        saveRange();
-        return;
-      }
-      // 빈 입력에서 백스페이스 → 마지막 스킬 칩 제거 (UX 통념).
-      if (isEmpty && ui.composerSkills.length > 0) {
-        e.preventDefault();
-        ui.composerSkills = ui.composerSkills.slice(0, -1);
+        refreshCaret();
         return;
       }
     }
@@ -355,24 +454,6 @@
     </div>
   {/if}
 
-  <!-- 부착된 skill chip — 입력창 위 별도 줄 (스킬은 위치 비의존 modifier 라 트레이 유지) -->
-  {#if ui.composerSkills.length > 0}
-    <div class="chips">
-      {#each ui.composerSkills as name (name)}
-        <span class="chip">
-          <span class="chip-icon">✦</span>
-          {name}
-          <button
-            type="button"
-            class="chip-remove"
-            onclick={() => removeSkill(name)}
-            aria-label={`${name} 제거`}
-          >×</button>
-        </span>
-      {/each}
-    </div>
-  {/if}
-
   <div class="composer">
     <div
       bind:this={editorEl}
@@ -387,9 +468,9 @@
       oninput={onInput}
       onkeydown={onKey}
       onpaste={onPaste}
-      onkeyup={saveRange}
-      onmouseup={saveRange}
-      onblur={saveRange}
+      onkeyup={refreshCaret}
+      onmouseup={refreshCaret}
+      onblur={refreshCaret}
     ></div>
     <button class="send" onclick={submit} disabled={!canSend} aria-label="전송">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -417,51 +498,6 @@
     right: 24px;
     bottom: calc(100% - 4px);
     z-index: 20;
-  }
-
-  .chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-bottom: 8px;
-  }
-
-  .chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--accent);
-    background: var(--accent-soft);
-    border: 1px solid var(--accent-border);
-    border-radius: var(--radius-full);
-    padding: 3px 4px 3px 9px;
-    line-height: 1.4;
-  }
-
-  .chip-icon {
-    font-size: 11px;
-  }
-
-  .chip-remove {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    margin-left: 2px;
-    color: var(--accent);
-    font-size: 14px;
-    line-height: 1;
-    opacity: 0.7;
-    transition: opacity var(--dur-fast) ease, background var(--dur-fast) ease;
-  }
-
-  .chip-remove:hover {
-    opacity: 1;
-    background: var(--accent-soft-strong);
   }
 
   .composer {
@@ -531,6 +567,39 @@
   }
 
   :global(.editor .ref-pill-label) {
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* 인라인 스킬 pill — "/" 명령으로 삽입. ref pill 과 같은 형태에 강조 톤(채움)으로 구분 */
+  :global(.editor .skill-pill) {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    vertical-align: baseline;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+    background: var(--accent-soft-strong);
+    border: 1px solid var(--accent-border);
+    border-radius: var(--radius-sm);
+    padding: 0 7px;
+    margin: 0 1px;
+    line-height: 1.5;
+    white-space: nowrap;
+    user-select: none;
+    cursor: default;
+  }
+
+  :global(.editor .skill-pill-icon) {
+    flex-shrink: 0;
+    font-size: 11px;
+    line-height: 1;
+  }
+
+  :global(.editor .skill-pill-label) {
     max-width: 220px;
     overflow: hidden;
     text-overflow: ellipsis;

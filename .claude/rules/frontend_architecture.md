@@ -72,9 +72,9 @@ ui.currentModel;                       // 현재 선택된 모델명
 ui.modelListByProvider;                // { [provider]: { models, loading, loadedAt } }
 ui.modelPickerOpen;                    // 드롭업 열림 여부
 
-// 슬래시 커맨드
+// 슬래시 커맨드 — 스킬은 입력창 inline pill(parts {type:"skill"})로 삽입됨 (@인용과 동일 모델).
 ui.availableSkills;                    // GET /api/skills 결과 캐시
-ui.composerSkills;                     // 전송 시 force_skills 로 넘길 스킬 목록
+// 전송 시 sendMessage 가 parts 의 {type:"skill"} 를 force_skills 로 추출 (별도 트레이 상태 없음)
 
 // 아티팩트 패널
 ui.activeArtifactId;

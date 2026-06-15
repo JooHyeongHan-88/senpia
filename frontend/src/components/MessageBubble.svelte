@@ -19,6 +19,10 @@
   let { message } = $props();
 
   let isUser = $derived(message.role === "user");
+  // 신규 메시지는 스킬이 parts 안 inline pill 로 들어온다 — 별도 상단 스킬바는 레거시 폴백만.
+  let hasInlineSkills = $derived(
+    isUser && Array.isArray(message.parts) && message.parts.some((p) => p.type === "skill"),
+  );
   // 구 메시지(segments 없음) 전용 마크다운 렌더링
   let legacyHtml = $derived(isUser ? "" : renderMarkdown(message.content ?? ""));
   // isStreaming: Segment 컴포넌트에 전달하기 위해 전역 ui.streaming 유지
@@ -55,8 +59,8 @@
   <div class="bubble-wrap">
   <div class="bubble" class:user={isUser}>
     {#if isUser}
-      <!-- 슬래시 커맨드로 부착한 skill 을 대화창 안에서도 표시 -->
-      {#if message.appliedSkills && message.appliedSkills.length > 0}
+      <!-- (레거시) 구 모델 메시지 — 스킬이 parts inline 이 아닌 별도 트레이로 저장된 경우만 -->
+      {#if message.appliedSkills && message.appliedSkills.length > 0 && !hasInlineSkills}
         <div class="skill-bar user-skills">
           {#each message.appliedSkills as skill (skill)}
             <span class="skill-chip user-chip">
@@ -66,9 +70,9 @@
           {/each}
         </div>
       {/if}
-      <!-- 인용 pill 을 본문 텍스트 흐름 안에 인라인으로 렌더 (parts 우선) -->
+      <!-- 인용·스킬 pill 을 본문 텍스트 흐름 안에 인라인으로 렌더 (parts 우선) -->
       {#if message.parts && message.parts.length > 0}
-        <div class="user-content">{#each message.parts as part, i (i)}{#if part.type === "ref"}<span class="ref-pill" title={part.path}><ArtifactIcon kind="file" size={12} /><span class="ref-pill-label">{part.label}</span></span>{:else}{part.value}{/if}{/each}</div>
+        <div class="user-content">{#each message.parts as part, i (i)}{#if part.type === "ref"}<span class="ref-pill" title={part.path}><ArtifactIcon kind="file" size={12} /><span class="ref-pill-label">{part.label}</span></span>{:else if part.type === "skill"}<span class="skill-pill-inline" title={`스킬: ${part.name}`}><span class="skill-icon">✦</span>{part.name}</span>{:else}{part.value}{/if}{/each}</div>
       {:else if message.refs && message.refs.length > 0}
         <!-- (구) refs 폴백 — 트레이형 pill + 본문 -->
         <div class="ref-pill-bar">
@@ -311,6 +315,29 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  /* ── 인라인 스킬 pill (입력창 .skill-pill 과 시각 일관) ── */
+  .skill-pill-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    vertical-align: baseline;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+    background: var(--accent-soft-strong);
+    border: 1px solid var(--accent-border);
+    border-radius: var(--radius-sm);
+    padding: 0 6px;
+    margin: 0 1px;
+    line-height: 1.5;
+    white-space: nowrap;
+  }
+
+  .skill-pill-inline .skill-icon {
+    font-size: 11px;
+    line-height: 1;
   }
 
   /* ── 스킬 뱃지 바 ── */

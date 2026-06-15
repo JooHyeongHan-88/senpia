@@ -141,24 +141,29 @@ function newSession() {
 // 그대로 이해하게 한다. text 는 값 그대로, ref 는 path 로 치환해 이어붙인다.
 function _wireFromParts(parts) {
   return (parts ?? [])
+    .filter((p) => p.type !== "skill") // 스킬은 force_skills 로 따로 라우팅 — 본문 비포함
     .map((p) => (p.type === "ref" ? p.path : (p.value ?? "")))
     .join("");
 }
 
 // parts → 사람이 읽는 표시 문자열 (ref 는 파일명 라벨). 제목 생성·레거시 폴백용.
+// 스킬 pill 은 본문이 아닌 modifier 라 표시 문자열에서도 제외 (제목은 텍스트 기준).
 function _displayFromParts(parts) {
   return (parts ?? [])
+    .filter((p) => p.type !== "skill")
     .map((p) => (p.type === "ref" ? p.label : (p.value ?? "")))
     .join("");
 }
 
-// parts 정규화 — 인접 text 병합·빈 text 제거·ref 형태 보존. pill 주위 공백은 의미가 있어 유지한다.
+// parts 정규화 — 인접 text 병합·빈 text 제거·ref/skill 형태 보존. pill 주위 공백은 의미가 있어 유지한다.
 function _normalizeParts(parts) {
   const out = [];
   for (const p of parts ?? []) {
     if (!p) continue;
     if (p.type === "ref" && p.path) {
       out.push({ type: "ref", path: p.path, label: p.label || p.path });
+    } else if (p.type === "skill" && p.name) {
+      out.push({ type: "skill", name: p.name });
     } else if (p.type === "text" && p.value) {
       const last = out[out.length - 1];
       if (last && last.type === "text") last.value += p.value;
@@ -270,7 +275,9 @@ export async function sendMessage(input) {
     : _normalizeParts([{ type: "text", value: String(input ?? "") }]);
 
   const displayContent = _displayFromParts(parts).trim();
-  const hasSkills = ui.composerSkills.length > 0;
+  // 스킬은 이제 입력창 inline pill(parts {type:"skill"})에서 추출 — 순서 보존·중복 제거.
+  const skills = [...new Set(parts.filter((p) => p.type === "skill").map((p) => p.name))];
+  const hasSkills = skills.length > 0;
   const hasRefs = parts.some((p) => p.type === "ref");
 
   // 텍스트가 없어도 skill chip 이나 산출물 인용이 부착돼 있으면 전송을 허용한다.
@@ -300,7 +307,7 @@ export async function sendMessage(input) {
   if (!session) return;
 
   const now = Date.now();
-  const forced = hasSkills ? [...ui.composerSkills] : null;
+  const forced = hasSkills ? skills : null;
   const firstRefLabel = parts.find((p) => p.type === "ref")?.label ?? "";
 
   const userMsg = {
@@ -346,9 +353,8 @@ export async function sendMessage(input) {
   startStreamClock();
   flushSave();
 
-  // 백엔드로 보낼 force_skills 를 미리 캡처 후, 다음 입력에 잔여물이 남지 않도록 즉시 리셋.
+  // force_skills 는 parts 에서 추출된 스킬 목록 (입력창은 submit 시 이미 비워짐 — 별도 리셋 불필요).
   const forceSkills = forced;
-  ui.composerSkills = [];
 
   // LLM 에 전달할 실제 메시지 — parts 의 pill 자리에 경로를 인라인 합성한다
   // (toBackendMessages 복원과 동일 와이어 본문). 본문이 비면 skill 이름으로 대체.
@@ -559,7 +565,9 @@ export async function rewindToMessage(messageId) {
       ? target.parts.map((p) =>
           p.type === "ref"
             ? { type: "ref", path: p.path, label: p.label }
-            : { type: "text", value: p.value ?? "" },
+            : p.type === "skill"
+              ? { type: "skill", name: p.name }
+              : { type: "text", value: p.value ?? "" },
         )
       : [{ type: "text", value: target.content ?? "" }];
 
