@@ -1,4 +1,4 @@
-// Part 1 — 프로젝트 전체 흐름 (12장)
+// Part 1 — 프로젝트 전체 흐름 (13장)
 const { T, lightSlide, header, card, chip, numDot, codeBlock, table, arrow, lines } = require("./theme");
 
 function s_define(pres) {
@@ -411,4 +411,37 @@ function s_psa(pres) {
   ], { x: 8.63, y: 5.64, w: 3.75, h: 1.1, fontFace: T.KR, margin: 0, lineSpacingMultiple: 1.2 });
 }
 
-module.exports = { s_define, s_goals, s_bigpicture, s_runtime, s_stack, s_arch, s_dirs, s_devfrozen, s_build, s_update, s_env, s_psa };
+function s_extensions(pres) {
+  const s = lightSlide(pres);
+  header(s, "PART 1 · 전체 흐름", "확장 시스템 (Extensions) — 폴더 단위로 더하고 빼는 독립 도구", { sub: "PROMPTS/SKILLS/AGENTS가 에이전트의 ‘행동’을 정의한다면, extensions/는 채팅 UI에 담기 어려운 독립 시각 도구를 격리해 붙인다" });
+  // 좌: 컨벤션 + 격리
+  s.addText("컨벤션 — 호스트가 아는 것은 이것뿐", { x: 0.7, y: 1.95, w: 6.05, h: 0.3, fontFace: T.KR, fontSize: 12.5, bold: true, color: T.INK, margin: 0 });
+  table(pres, s, 0.7, 2.35, 6.05, ["컨벤션 경로", "마운트"], [
+    [{ t: "backend/router.py — get_router()", mono: true, s: 8.5 }, { t: "/api/ext/<tool>", mono: true, s: 8.5 }],
+    [{ t: "frontend/dist (빌드된 SPA)", mono: true, s: 8.5 }, { t: "/ext/<tool>", mono: true, s: 8.5 }],
+  ], { size: 9, colW: [4.0, 2.05], rowH: 0.5 });
+  s.addText("둘 중 있는 것만 마운트 — 로더(core/extensions_loader.py)가 부팅 시 자동 발견", { x: 0.7, y: 3.45, w: 6.05, h: 0.3, fontFace: T.KR, fontSize: 9.5, color: T.FAINT, margin: 0 });
+  s.addText("격리 보장 — 폴더를 통째로 지워도 안전", { x: 0.7, y: 3.95, w: 6.05, h: 0.3, fontFace: T.KR, fontSize: 12.5, bold: true, color: T.INK, margin: 0 });
+  lines(s, 0.7, 4.4, 6.05, 2.2, [
+    { t: "폴더 하나를 지워도 메인 앱 무영향 — 로더 no-op, App.spec 글롭 빈 리스트", bullet: { code: "2022", color: T.ACC }, s: 10.5, c: T.MUT, gap: 8 },
+    { t: "새 도구 추가에 호스트 코드 수정 불필요 — 컨벤션으로 자동 발견", bullet: { code: "2022", color: T.ACC }, s: 10.5, c: T.MUT, gap: 8 },
+    { t: "한 확장의 실패가 부팅을 막지 않음 — 확장별 try/except 격리", bullet: { code: "2022", color: T.ACC }, s: 10.5, c: T.MUT, gap: 8 },
+    { t: "파일 경로 적재(frozen 대응) — 호스트가 번들한 절대 import만 사용", bullet: { code: "2022", color: T.ACC }, s: 10.5, c: T.MUT },
+  ]);
+  // 우: open_curation 핸드오프 + evaluator
+  s.addText("진입 규약 — open_curation 핸드오프", { x: 7.05, y: 1.95, w: 5.6, h: 0.3, fontFace: T.KR, fontSize: 12.5, bold: true, color: T.INK, margin: 0 });
+  codeBlock(pres, s, 7.05, 2.35, 5.6, 2.45, [
+    { t: "① 에이전트  후보 parquet → open_curation()", c: T.CODE_ACC, b: true },
+    { t: "② 호스트    번들 + ‘큐레이션 도구 열기’ 카드" },
+    { t: "③ 사용자    카드 클릭 → 새 탭 /ext/<tool>/?bundle=" },
+    { t: "④ 확장 도구  parquet 로드 → 검토·선별·편집" },
+    { t: "⑤ 환류      내보내기 → 메인 앱 데이터 칩 + 요약", c: T.CODE_ACC, b: true },
+  ], { size: 9.5, lh: 1.5 });
+  card(pres, s, 7.05, 5.1, 5.6, 1.5, { fill: T.ACC_SOFT, noLine: true });
+  s.addText([
+    { text: "예시 — evaluator (parquet 큐레이션 BI)", options: { bold: true, color: T.ACC_DK, fontSize: 11, breakLine: true, paraSpaceAfter: 4 } },
+    { text: "AI가 만든 순위 후보를 사람이 Tableau 풍 BI로 검토·선별·재정렬 — AI 생성 → 사람 큐레이션 → 결과 환류의 닫힌 루프", options: { color: T.INK, fontSize: 10.5 } },
+  ], { x: 7.33, y: 5.26, w: 5.05, h: 1.25, fontFace: T.KR, margin: 0, lineSpacingMultiple: 1.25 });
+}
+
+module.exports = { s_define, s_goals, s_bigpicture, s_runtime, s_stack, s_arch, s_dirs, s_devfrozen, s_build, s_update, s_env, s_psa, s_extensions };

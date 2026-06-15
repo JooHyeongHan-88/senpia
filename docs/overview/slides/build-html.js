@@ -16,7 +16,7 @@ cover(pres);
 agenda(pres);
 
 divider(pres, 1, "프로젝트 전체 흐름", "무엇을 만들고, 어떻게 빌드·배포되는가", [
-  "한 문장 정의", "설계 목표", "5단계 큰 그림", "아키텍처", "빌드·배포", "자동 업데이트", "환경 변수", "PROMPTS·SKILLS·AGENTS",
+  "한 문장 정의", "설계 목표", "5단계 큰 그림", "아키텍처", "빌드·배포", "자동 업데이트", "환경 변수", "PROMPTS·SKILLS·AGENTS", "확장 시스템",
 ]);
 p1.s_define(pres);
 p1.s_goals(pres);
@@ -30,9 +30,10 @@ p1.s_build(pres);
 p1.s_update(pres);
 p1.s_env(pres);
 p1.s_psa(pres);
+p1.s_extensions(pres);
 
 divider(pres, 2, "구현된 UX / UI", "최종 사용자가 만나는 화면과 기능", [
-  "화면 레이아웃", "세션·입력", "진행 가시화", "활동 타임라인", "아티팩트 패널", "차트 인터랙션", "설정·업데이트", "Mock 시나리오",
+  "화면 레이아웃", "세션·입력", "진행 가시화", "활동 타임라인", "아티팩트 패널", "차트 인터랙션", "확장 도구", "설정·업데이트", "Mock 시나리오",
 ]);
 p2.s_layout(pres);
 p2.s_session(pres);
@@ -41,11 +42,12 @@ p2.s_timeline(pres);
 p2.s_askuser(pres);
 p2.s_artifact(pres);
 p2.s_chart(pres);
+p2.s_curation(pres);
 p2.s_settings(pres);
 p2.s_mock(pres);
 
 divider(pres, 3, "Backend 동작 흐름", "기동부터 채팅 한 턴이 처리되는 전 과정", [
-  "5가지 책임", "기동·생명주기", "API 지도", "모듈 지도", "run_turn", "SSE 이벤트", "라우팅·위임", "Registry·도구", "산출물 파이프라인", "안전장치",
+  "5가지 책임", "기동·생명주기", "API 지도", "모듈 지도", "run_turn", "SSE 이벤트", "라우팅·위임", "Registry·도구", "산출물 파이프라인", "확장 시스템", "안전장치",
 ]);
 p3.s_duties(pres);
 p3.s_boot(pres);
@@ -57,6 +59,7 @@ p3.s_routing(pres);
 p3.s_registry(pres);
 p3.s_tools(pres);
 p3.s_pipeline(pres);
+p3.s_extensions(pres);
 p3.s_safety(pres);
 
 closing(pres);

@@ -164,6 +164,9 @@ svelte-fastapi-exe/
 ├─ SKILLS/              # 상황별 작업 지침 (.md) — 키워드 트리거로 주입
 ├─ AGENTS/              # 서브 에이전트 정의 (.md) — 위임 대상 카탈로그
 │
+├─ extensions/          # 메인 앱과 격리된 독립 확장 도구 (폴더 단위 추가·삭제)
+│   └─ evaluator/       #    예시: parquet 큐레이션 BI 도구 (Svelte SPA + FastAPI 라우터)
+│
 ├─ packaging/           # App.spec · Updater.spec · release.ps1 (빌드 파이프라인)
 ├─ updater/             # Updater.exe 소스 (자가 교체 로직)
 ├─ docs/                # 개발자 가이드 (이 폴더 포함)
@@ -177,6 +180,7 @@ svelte-fastapi-exe/
 
 **확장 포인트는 전부 코드 밖에 있다**: 에이전트의 행동을 바꾸려면 `PROMPTS/`·`SKILLS/`·`AGENTS/`
 마크다운을 수정하고, 새 도구는 `backend/agent/tools/`에 파일 하나를 추가하면 자동 등록된다.
+독립적인 시각 도구가 필요하면 `extensions/`에 폴더 하나를 더하면 된다 (호스트 코드 무수정 — 13절).
 
 ---
 
@@ -225,6 +229,7 @@ cd frontend; npm run dev           # 터미널 2 — http://localhost:5173
 | `.env` | 빌드 시점 설정 박제 |
 | `backend/scripts/` 전체 서브모듈 | `collect_submodules('scripts')` 자동 수집 |
 | `APP_ALLOWED_LIBRARIES`의 각 패키지 | `.env`를 읽어 `collect_all()` — **env 한 줄 = 번들 자동 포함** |
+| `extensions/<tool>/backend` + `frontend/dist` | 확장 도구 — 폴더 글롭으로 **있을 때만** 선별 번들 (런타임 필요분만, src·node_modules·tests 제외) |
 
 업로드 순서가 "EXE 먼저, latest.json 마지막"인 이유: 메타데이터가 먼저 올라가면
 클라이언트가 아직 존재하지 않는 EXE(404)를 다운로드하려고 시도할 수 있기 때문.
@@ -406,7 +411,68 @@ priority: 5
 
 ---
 
-## 13. 정리 — 이 프로젝트를 한 장으로
+## 13. 확장 시스템 (Extensions) — 폴더 단위로 더하고 빼는 독립 도구
+
+`PROMPTS/SKILLS/AGENTS`가 **에이전트의 행동**을 코드 밖에서 정의하는 확장점이라면,
+`extensions/`는 **채팅 UI에 담기 어려운 독립 도구**(시각적·상태 보존·사람 판단 중심)를
+메인 앱과 완전히 격리해 붙이는 확장점이다. **폴더 하나가 곧 하나의 도구다.**
+
+### 왜 분리하나
+
+채팅 에이전트는 대화·프로그래밍 작업에 강하지만, 어떤 작업은 **풍부하고 상태를 가진
+시각적 인터페이스**가 필요하다 (예: 사람이 후보 데이터를 눈으로 비교·선별하는 큐레이션).
+이런 도구를 메인 앱 코드에 박아 넣으면 결합도가 올라간다. 그래서 호스트는 개별 도구를
+모른 채 **컨벤션**만 따르고, 도구는 폴더 단위로 자급(self-contained)한다.
+
+### 컨벤션 — 호스트가 아는 것은 이것뿐
+
+| 컨벤션 경로 | 역할 | 마운트 |
+|---|---|---|
+| `extensions/<tool>/backend/router.py`의 `get_router()` | FastAPI 라우터 팩토리 | `/api/ext/<tool>` |
+| `extensions/<tool>/frontend/dist` | 빌드된 Svelte SPA | `/ext/<tool>` |
+
+둘 중 **있는 것만** 마운트된다 (라우터만·SPA만 있어도 동작). 로더
+(`backend/core/extensions_loader.py`)가 부팅 시 `extensions/*`를 스캔해 자동 발견·마운트한다.
+
+### 격리 보장 — 폴더를 통째로 지워도 안전
+
+| 보장 | 근거 |
+|---|---|
+| 폴더 하나를 지워도 메인 앱 무영향 | 로더가 빈손이면 no-op, App.spec 글롭이 빈 리스트 |
+| 새 도구 추가에 호스트 코드 수정 불필요 | 로더가 컨벤션으로 자동 발견 |
+| 한 확장의 실패가 부팅을 막지 않음 | 확장별 try/except 격리 (경고 후 다음 확장) |
+
+> 확장 모듈은 파일 경로로 적재되므로(frozen EXE 대응) **호스트가 이미 번들한 절대 import만**
+> 쓴다 (`core.*`·`api.*`·polars·fastapi). 빌드 시 App.spec이 `backend`·`frontend/dist`를
+> **있을 때만** 선별 번들한다 (9절).
+
+### 진입 규약 — `open_curation` 핸드오프
+
+에이전트가 후보 데이터를 만든 뒤 사람을 확장 도구로 넘기는 표준 경로:
+
+```
+① 에이전트  후보 parquet 산출 → open_curation(tool, sources, mapping, mark) 호출
+② 호스트    번들 스펙(<tool>.bundle.json) 작성 + "큐레이션 도구 열기" 마크다운 카드를
+            아티팩트 패널에 표시 (전용 컴포넌트 없이 기존 markdown 칩 재사용)
+③ 사용자    카드 링크 클릭 → 새 탭에서 /ext/<tool>/?bundle=... 열림
+④ 확장 도구  번들의 parquet 들을 로드 → 사람이 검토·선별·편집
+⑤ 환류      도구가 결과를 내보내면 메인 앱 탭에 알림 → 데이터 칩 + 결정 요약으로 인폼
+```
+
+`open_curation`은 **evaluator에 특정되지 않는다** — `tool` 인자로 임의 확장을 가리키고
+`mapping`도 해석 없이 번들에 그대로 실어 보낸다(확장이 해석). 확장 진입 규약을 한 곳에 모은
+제네릭 호스트 훅이다.
+
+### 예시 확장 — evaluator (parquet 큐레이션 BI)
+
+AI가 만든 순위 후보 parquet을 **사람이 Tableau 풍 BI로 검토·선별·재정렬**해 최종 리포트용
+데이터로 만드는 도구. 차트 7종(메인 앱 `display_chart`와 동일) · 컬럼 매핑 · 리스트 검색/필터 ·
+전체 조망 · 내보내기 환류를 갖춘다. **AI 생성 → 사람 큐레이션 → 결과 환류**의 닫힌 루프가
+핵심 가치다 (사용자 화면은 [② UX/UI](02-ux-ui.md), 백엔드는 [③ Backend](03-backend-flow.md) 참조).
+
+---
+
+## 14. 정리 — 이 프로젝트를 한 장으로
 
 ```
 만드는 것   : 로컬 단일 EXE로 배포되는 사내 AI Agent 채팅 앱
@@ -414,6 +480,7 @@ priority: 5
 서버        : FastAPI       (정적 서빙 + API + presence 생명주기 + 자동 업데이트)
 에이전트     : 하니스 루프    (LLM provider ↔ 등록된 도구 실행, plan 기반)
 확장        : PROMPTS/SKILLS/AGENTS 마크다운 + @register_tool + .env 한 줄
+확장 도구    : extensions/ 폴더 단위 독립 도구 (격리·open_curation 핸드오프)
 빌드        : release.ps1 → PyInstaller onefile EXE + latest.json
 배포        : Nexus 업로드 → 앱이 스스로 확인·다운로드·sha256 검증·자가 교체
 ```

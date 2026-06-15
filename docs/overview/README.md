@@ -32,4 +32,5 @@ node docs/overview/slides/build-html.js   # slides/index.html 재생성
 ## 더 깊이 들어가려면
 
 - 에이전트 확장(SKILLS/AGENTS/도구 추가) → [docs/README.md](../README.md)
+- 확장 시스템(extensions/ 추가·격리·open_curation) → `.claude/rules/extensions_architecture.md`
 - 아키텍처 세부 결정 사항 → `.claude/rules/*.md`

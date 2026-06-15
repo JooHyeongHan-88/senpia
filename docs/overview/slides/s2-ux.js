@@ -1,4 +1,4 @@
-// Part 2 — 구현된 UX/UI (9장)
+// Part 2 — 구현된 UX/UI (10장)
 const { T, lightSlide, header, card, chip, numDot, codeBlock, table, lines } = require("./theme");
 
 function s_layout(pres) {
@@ -327,4 +327,30 @@ function s_mock(pres) {
   });
 }
 
-module.exports = { s_layout, s_session, s_progress, s_timeline, s_askuser, s_artifact, s_chart, s_settings, s_mock };
+function s_curation(pres) {
+  const s = lightSlide(pres);
+  header(s, "PART 2 · UX/UI", "확장 도구 — 큐레이션 핸드오프 (evaluator)", { sub: "분석 결과를 사람이 시각적으로 검토·선별 — 메인 앱과 격리된 Tableau 풍 큐레이션 BI 도구" });
+  // 좌: evaluator 영역
+  table(pres, s, 0.7, 1.95, 6.55, ["영역", "기능"], [
+    [{ t: "좌측 리스트", b: true }, "후보 체크·순서 변경 + 검색·legend 필터·일괄 선택(전체/해제/반전)"],
+    [{ t: "차트 종류", b: true }, "scatter/line/bar/box/histogram/ecdf/heatmap 7종 즉시 전환"],
+    [{ t: "⚙ 매핑 설정", b: true }, "컬럼→역할(축·범례·정렬·설명) 매핑 · legend 다중 컬럼 합성"],
+    [{ t: "보기 모드", b: true }, "항목별 그리드 ↔ 전체 조망(전 후보를 한 차트에 모아 비교)"],
+    [{ t: "라이트박스", b: true }, "차트 확대 + brush·레전드 Filter · Undo/Redo"],
+    [{ t: "하단", b: true }, "큐레이션 메모 · 저장하기 · 내보내기"],
+  ], { size: 9.5, colW: [1.55, 5.0], rowH: 0.56 });
+  // 우: 진입 + 환류
+  card(pres, s, 7.55, 1.95, 5.1, 1.7, { fill: T.WHITE });
+  s.addText("진입 — 큐레이션 카드", { x: 7.8, y: 2.12, w: 4.6, h: 0.3, fontFace: T.KR, fontSize: 11.5, bold: true, color: T.ACC_DK, margin: 0 });
+  s.addText("에이전트가 open_curation 호출 → 패널에 ‘🔍 큐레이션 도구 열기’ 카드 → 클릭 시 새 탭에서 번들 parquet 로드", { x: 7.8, y: 2.5, w: 4.6, h: 1.05, fontFace: T.KR, fontSize: 10, color: T.MUT, margin: 0, lineSpacingMultiple: 1.25 });
+  card(pres, s, 7.55, 3.83, 5.1, 2.77, { fill: T.ACC_SOFT, noLine: true });
+  s.addText("환류 — 결과가 채팅으로 되돌아온다", { x: 7.8, y: 4.0, w: 4.6, h: 0.3, fontFace: T.KR, fontSize: 11.5, bold: true, color: T.ACC_DK, margin: 0 });
+  lines(s, 7.8, 4.42, 4.6, 1.45, [
+    { t: "내보내기 → 같은 출처 메인 앱 탭에 BroadcastChannel 알림", s: 9.8, c: T.INK, gap: 6 },
+    { t: "데이터 칩 + 결정 요약 배너 (후보 N개 중 M개 선택·X행 제외·메모)", s: 9.8, c: T.INK, gap: 6 },
+    { t: "‘이어서 작업’ 버튼 → 결정 맥락+경로를 입력창에 시드", s: 9.8, c: T.INK },
+  ]);
+  s.addText("AI 생성 → 사람 큐레이션 → 결과 환류의 닫힌 루프", { x: 7.8, y: 6.12, w: 4.6, h: 0.4, fontFace: T.KR, fontSize: 10, italic: true, color: T.ACC_DK, margin: 0, lineSpacingMultiple: 1.2 });
+}
+
+module.exports = { s_layout, s_session, s_progress, s_timeline, s_askuser, s_artifact, s_chart, s_curation, s_settings, s_mock };

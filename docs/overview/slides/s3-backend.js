@@ -1,4 +1,4 @@
-// Part 3 — Backend 동작 흐름 (11장)
+// Part 3 — Backend 동작 흐름 (12장)
 const { T, lightSlide, header, card, chip, numDot, codeBlock, table, lines } = require("./theme");
 
 function s_duties(pres) {
@@ -268,11 +268,11 @@ function s_registry(pres) {
 
 function s_tools(pres) {
   const s = lightSlide(pres);
-  header(s, "PART 3 · BACKEND", "Built-in 도구 카탈로그 — 5그룹 23종", { sub: "새 도구를 추가하기 전부터 내장된 도구 전체 (인자 상세: docs/builtin-tools.md)" });
+  header(s, "PART 3 · BACKEND", "Built-in 도구 카탈로그 — 5그룹 24종", { sub: "새 도구를 추가하기 전부터 내장된 도구 전체 (인자 상세: docs/builtin-tools.md)" });
   const groups = [
     ["계획·상호작용 (Sentinel)", "7", "add_todo · complete_todo · ask_user · activate_skill · call_sub_agent · call_sub_agents_parallel · complete_subagent", "하니스가 직접 처리 — 계획 수립·되묻기·위임·종료 보고"],
     ["산출물 저장·재발견", "3", "save_artifact · list_artifacts · load_artifact", "파일 영속(markdown·json·parquet·바이너리) → 목록 재발견 → 변수로 복원 — 세션을 넘는 재사용"],
-    ["시각화", "3", "display_image · display_chart · display_markdown", "아티팩트 패널로 전달 — 갤러리 · ECharts · 보고서 렌더링"],
+    ["시각화·핸드오프", "4", "display_image · display_chart · display_markdown · open_curation", "아티팩트 패널로 전달 — 갤러리 · ECharts · 보고서 · 확장 큐레이션 도구 핸드오프(15절)"],
     ["라이브러리 런타임 메타", "8", "inspect_callable · list_module_members · call_function · eval_expression · exec_code · list_namespace · describe_variable · delete_variable", "api_refs 활성 시 자동 노출 — 외부 Python 라이브러리를 wrapper 없이 동적 사용"],
     ["데모", "1", "now", "현재 시각 반환 — 등록 패턴 예시 겸용"],
   ];
@@ -350,4 +350,33 @@ function s_safety(pres) {
   });
 }
 
-module.exports = { s_duties, s_boot, s_api, s_modules, s_runturn, s_sse, s_routing, s_registry, s_tools, s_pipeline, s_safety };
+function s_extensions(pres) {
+  const s = lightSlide(pres);
+  header(s, "PART 3 · BACKEND", "확장 시스템 — 격리된 독립 도구 (extensions/)", { sub: "호스트는 개별 도구를 모르고 컨벤션만 따른다 — 로더가 부팅 시 자동 발견·마운트 (개념: ① 13절)" });
+  // 좌: 로더 + 마운트 순서
+  s.addText("로더 — core/extensions_loader.py", { x: 0.7, y: 1.95, w: 6.05, h: 0.3, fontFace: T.KR, fontSize: 12.5, bold: true, color: T.INK, margin: 0 });
+  table(pres, s, 0.7, 2.35, 6.05, ["동작", "구현"], [
+    [{ t: "경로 단일 원천", b: true }, "extensions/ — frozen은 MEIPASS, dev는 프로젝트 루트"],
+    [{ t: "파일 경로 적재", b: true }, "spec_from_file_location flat 모듈 — frozen onefile 대응"],
+    [{ t: "확장별 격리", b: true }, "_mount_extension try/except — 실패가 부팅 안 막음"],
+    [{ t: "마운트", b: true }, "라우터→/api/ext/<tool> · dist→/ext/<tool> (있는 것만)"],
+  ], { size: 9.3, colW: [1.7, 4.35], rowH: 0.52 });
+  card(pres, s, 0.7, 4.7, 6.05, 1.55, { fill: T.BG2, noLine: true });
+  s.addText([
+    { text: "마운트 순서가 중요  ", options: { bold: true, color: T.ACC_DK, fontSize: 11, breakLine: true, paraSpaceAfter: 4 } },
+    { text: "load_extensions(app)는 메인 SPA catch-all(/{path:path})보다 먼저 호출돼야 /api/ext/*·/ext/*가 폴백에 잡히지 않는다 (Starlette는 등록 순서로 매칭).", options: { color: T.INK, fontSize: 10 } },
+  ], { x: 0.98, y: 4.85, w: 5.5, h: 1.3, fontFace: T.KR, margin: 0, lineSpacingMultiple: 1.25 });
+  // 우: open_curation + evaluator 라우터
+  s.addText("open_curation — 제네릭 진입 훅", { x: 7.05, y: 1.95, w: 5.6, h: 0.3, fontFace: T.KR, fontSize: 12.5, bold: true, color: T.INK, margin: 0 });
+  s.addText("후보 parquet → 번들 스펙 + 마크다운 카드(기존 칩 재사용). evaluator 비특정 — tool 인자로 임의 확장을 가리킨다.", { x: 7.05, y: 2.32, w: 5.6, h: 0.7, fontFace: T.KR, fontSize: 9.8, color: T.MUT, margin: 0, lineSpacingMultiple: 1.2 });
+  s.addText("evaluator 라우터 — /api/ext/evaluator", { x: 7.05, y: 3.18, w: 5.6, h: 0.3, fontFace: T.KR, fontSize: 12.5, bold: true, color: T.INK, margin: 0 });
+  table(pres, s, 7.05, 3.58, 5.6, ["엔드포인트", "역할"], [
+    [{ t: "GET /dataset", mono: true, s: 9 }, "선택 리스트 + 차트 포인트 + 스키마"],
+    [{ t: "GET /sources · /preview", mono: true, s: 9 }, "소스 후보 · head 미리보기"],
+    [{ t: "GET·POST /state", mono: true, s: 9 }, "큐레이션 상태 사이드카"],
+    [{ t: "POST /export", mono: true, s: 9 }, "필터+재계산→parquet+결정 요약"],
+  ], { size: 9.3, colW: [2.4, 3.2], rowH: 0.45 });
+  s.addText("App.spec은 backend·frontend/dist를 있을 때만 선별 번들 — node_modules·src·tests 제외", { x: 7.05, y: 5.7, w: 5.6, h: 0.5, fontFace: T.KR, fontSize: 9.3, color: T.FAINT, margin: 0, lineSpacingMultiple: 1.2 });
+}
+
+module.exports = { s_duties, s_boot, s_api, s_modules, s_runturn, s_sse, s_routing, s_registry, s_tools, s_pipeline, s_extensions, s_safety };

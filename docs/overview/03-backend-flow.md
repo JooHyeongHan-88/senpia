@@ -95,6 +95,9 @@ dev 모드에서 `build/web/`이 없으면 ⑤의 SPA 서빙과 ⑥이 생략된
 
 이외 정적 mount: `/` (SPA) · `/assets` · `/result` (산출물) · `/workspace` (도구 생성 파일).
 
+> **확장 라우트**: `extensions/`의 각 도구는 `/api/ext/<tool>/*`(API)와 `/ext/<tool>`(SPA)로
+> 자동 마운트된다 — 호스트 코드 등록 없이 컨벤션으로 발견 (15절).
+
 ---
 
 ## 5. 모듈 지도 — 파일별 역할
@@ -360,13 +363,14 @@ async def fetch_sales(
 | `list_artifacts` | 읽기 | 현재 세션 산출물 목록 최신순 조회 (kind 필터, parquet은 행×열 요약) |
 | `load_artifact` | 읽기 | `result/...` 파일을 namespace 변수로 복원 (save의 역방향) — 과거 산출물 이어서 분석 |
 
-### 시각화 (아티팩트 패널로 전달)
+### 시각화·핸드오프 (아티팩트 패널로 전달)
 
 | 도구 | 역할 |
 |---|---|
 | `display_image` | 이미지(들) 갤러리 표시 — 경로/URL/data URI |
 | `display_chart` | parquet + 선언적 spec(`charts.spec.json`) → ECharts 인터랙티브 차트 (14절 파이프라인) |
 | `display_markdown` | 저장된 `.md` 보고서를 패널에 렌더링 |
+| `open_curation` | 후보 parquet 을 확장 큐레이션 도구(evaluator 등)로 핸드오프 — 진입 카드 칩 표시 (15절) |
 
 ### 라이브러리 런타임 메타 도구 (8종 — `api_refs` 활성 시 자동 노출)
 
@@ -469,7 +473,64 @@ result/
 
 ---
 
-## 15. 안전장치 모음 (요약)
+## 15. 확장 시스템 — 격리된 독립 도구 (`extensions/`)
+
+메인 앱과 분리된 독립 도구(Svelte SPA + FastAPI 라우터)를 폴더 단위로 붙이는 서브시스템.
+호스트는 개별 도구를 모르고 **컨벤션**만 따른다 (개념·격리 보장은 [① 13절](01-project-overview.md)).
+
+### 로더 — 컨벤션 기반 자동 발견 (`core/extensions_loader.py`)
+
+`load_extensions(app)`이 `extensions/*`를 스캔해 각 도구의 라우터·정적 SPA를 마운트한다.
+
+| 동작 | 구현 |
+|---|---|
+| 경로 단일 원천 | `_project_root()/extensions` — frozen은 MEIPASS, dev는 프로젝트 루트 (config 분기 재사용) |
+| 파일 경로 적재 | 라우터를 name-import가 아니라 `spec_from_file_location`으로 flat 모듈명 적재 — frozen onefile이 datas를 디스크로 풀어 파일에서 실행 가능 |
+| 확장별 격리 | `_mount_extension`을 try/except로 감싸 한 확장의 로드 실패가 부팅을 막지 않음 |
+| 마운트 | 라우터 → `/api/ext/<tool>`, `frontend/dist` → `/ext/<tool>` (있는 것만) |
+
+> **마운트 순서가 중요**하다: `load_extensions(app)`는 메인 SPA catch-all(`/{path:path}`)
+> **보다 먼저** 호출돼야 `/api/ext/*`·`/ext/*`가 폴백에 잡히지 않는다 (Starlette는 등록 순서로 매칭).
+
+### `open_curation` 도구 — 제네릭 진입 훅 (`agent/tools/curation.py`)
+
+에이전트가 후보 parquet 을 만든 뒤 한 번 호출하는 핸드오프 도구. evaluator에 특정되지 않는다.
+
+```
+open_curation(tool, sources, mapping, mark)
+  ① tool 이름 검증(경로 안전) · sources 검증(resolve_result_path + parquet)
+  ② 번들 스펙 <tool>.bundle.json 작성 (현재 턴 슬롯)
+  ③ "큐레이션 도구 열기" 마크다운 카드 작성 → 기존 markdown 칩 경로로 패널 표시
+     (전용 프론트 컴포넌트 없이 ToolResult(data={kind:"markdown"}))
+```
+
+카드 링크 `/ext/<tool>/?bundle=...`는 프론트 DOMPurify 훅이 모든 링크에 `target="_blank"`를
+부여해 **새 탭**에서 열린다 (채팅 탭 세션 소실 방지).
+
+### App.spec 선별 번들
+
+빌드 시 `extensions/*`를 글롭해 **런타임 필요분만** 번들한다 — `backend`·`frontend/dist`가
+**있을 때만** datas에 추가(없으면 no-op), `node_modules`·`src`·`tests`는 제외. 로더가 런타임에
+파일 경로로 적재하므로 `hiddenimports`/`collect_submodules`가 불필요하다.
+
+### 예시 — evaluator 라우터 (`/api/ext/evaluator`)
+
+호스트 Origin 가드를 재사용하고(`Depends(require_local_origin)`), 경로 해석은
+`resolve_result_path`로 일원화한다.
+
+| 엔드포인트 | 역할 |
+|---|---|
+| `GET /dataset` | 소스 parquet → 선택 리스트 + 차트 포인트 + 스키마 (매핑 쿼리로 투영) |
+| `GET /sources` · `GET /preview` | 세션 parquet 후보 목록 · head(N) 미리보기 (소스 picker) |
+| `GET·POST /state` | 큐레이션 상태(선택·순서·차트 종류·매핑) 사이드카 로드/저장 |
+| `POST /export` | 선택 항목만 필터 + 차트 Filter 제외 행 삭제 + 순위 재계산 → 새 parquet + **결정 요약** |
+
+내보내기 결과는 세션 manifest에 기록되고(채팅 에이전트가 재발견), `BroadcastChannel`로 메인 앱
+탭에 알려 데이터 칩 + 요약으로 환류된다.
+
+---
+
+## 16. 안전장치 모음 (요약)
 
 실 LLM의 비결정성·실패에 대비한 방어선들. (상세: `.claude/rules/harness_resilience.md`)
 
@@ -488,7 +549,7 @@ result/
 
 ---
 
-## 16. 설정 시스템 — settings.json & Provider Hot-swap
+## 17. 설정 시스템 — settings.json & Provider Hot-swap
 
 ```
 settings.json (dev: backend/settings/ · frozen: %APPDATA%\{APP_NAME}\)
@@ -508,7 +569,7 @@ settings.json (dev: backend/settings/ · frozen: %APPDATA%\{APP_NAME}\)
 
 ---
 
-## 17. 정리 — 백엔드를 한 장으로
+## 18. 정리 — 백엔드를 한 장으로
 
 ```
 기동      main.py → 동적 포트 → 레지스트리 로드 → 브라우저 오픈

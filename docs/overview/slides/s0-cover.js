@@ -44,17 +44,17 @@ function agenda(pres) {
     {
       n: "1", t: "프로젝트 전체 흐름",
       q: "무엇을 만들고, 어떻게 빌드·배포되는가?",
-      k: ["개발 → 빌드 → 배포 → 실행 → 업데이트", "아키텍처 · 디렉터리 구조", "환경 변수 · PROMPTS/SKILLS/AGENTS"],
+      k: ["개발 → 빌드 → 배포 → 실행 → 업데이트", "아키텍처 · 디렉터리 구조", "확장 — PROMPTS/SKILLS/AGENTS · extensions/"],
     },
     {
       n: "2", t: "구현된 UX / UI",
       q: "최종 사용자는 어떤 화면에서 무엇을 쓰는가?",
-      k: ["화면 레이아웃 · 세션 · 입력", "진행 가시화 · 에이전트 타임라인", "아티팩트 패널 · 차트 인터랙션 · 설정"],
+      k: ["화면 레이아웃 · 세션 · 입력", "진행 가시화 · 에이전트 타임라인", "아티팩트 · 차트 · 큐레이션 도구 · 설정"],
     },
     {
       n: "3", t: "Backend 동작 흐름",
       q: "백엔드는 내부적으로 어떻게 움직이는가?",
-      k: ["기동 · 생명주기 · API 지도", "채팅 한 턴(run_turn) · 서브 에이전트", "Registry · 내장 도구 · 산출물 파이프라인"],
+      k: ["기동 · 생명주기 · API 지도", "채팅 한 턴(run_turn) · 서브 에이전트", "Registry · 도구 · 산출물 · 확장 시스템"],
     },
   ];
   cards.forEach((c, i) => {
@@ -122,10 +122,11 @@ function closing(pres) {
     ["서버", "FastAPI — 정적 서빙 + API + presence 생명주기 + 자동 업데이트"],
     ["에이전트", "하니스 루프 — LLM provider와 등록된 도구의 plan 기반 반복 실행"],
     ["확장", "PROMPTS / SKILLS / AGENTS 마크다운 + @register_tool + .env 한 줄"],
+    ["확장 도구", "extensions/ 폴더 단위 독립 도구 — 격리 · open_curation 핸드오프"],
     ["빌드·배포", "release.ps1 → PyInstaller EXE + latest.json → Nexus → 자가 교체 업데이트"],
   ];
   rows.forEach((r, i) => {
-    const y = 2.35 + i * 0.62;
+    const y = 2.3 + i * 0.58;
     s.addText(r[0], {
       x: 0.74, y, w: 1.95, h: 0.45, fontFace: T.KR, fontSize: 13, bold: true,
       color: T.ACC, margin: 0, valign: "middle",
