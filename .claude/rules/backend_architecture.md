@@ -84,13 +84,18 @@
 
 ## 에이전트 하니스 구조
 
-`backend/agent/harness/` 패키지(`core.py`의 `run_turn()`) 한 번 = 사용자 입력 1건에 대한 완전한 응답 턴.
+`backend/agent/harness/` 패키지(`loop.py`의 `run_turn()`) 한 번 = 사용자 입력 1건에 대한 완전한 응답 턴.
 
-> **harness 패키지 구성** — 서브시스템이 커져 단일 파일에서 패키지로 분리됨 (다른 `agent/` 서브시스템과 동일 컨벤션):
-> - `harness/core.py` — `run_turn` 진입점 + provider→tool 루프 + 서브에이전트 dispatch + 도구 실행.
-> - `harness/prompts.py` — LLM system prompt 동적 조립 (오케스트레이터 / 서브에이전트 / 단층 fallback).
-> - `harness/state.py` — AgentState 변형(todo)·대화 히스토리 정합성(tool 쌍 보존)·루프 가드 시그니처.
-> - `harness/__init__.py` — 공개 API(`run_turn`/`TurnBudget`/`ORCHESTRATOR_ID`) + 하위호환 re-export. `from agent.harness import run_turn` 경로 불변.
+> **harness 패키지 구성** — 서브시스템이 커져 책임별 모듈·서브패키지로 분해됨. harness 는
+> 복잡도(멀티에이전트 오케스트레이션)상 **의도적으로 `agent/` 의 최초 중첩 서브패키지**다
+> (다른 `agent/` 서브시스템은 플랫 모듈). 최상위 코어 머신 + 3개 서브패키지로 나뉜다:
+> - `harness/loop.py` — `run_turn` 진입점 + `_run_agent_turn` 공통 provider→tool 루프 + sentinel 분기.
+> - `harness/budget.py` — `TurnBudget` (한 턴 provider 호출 상한 + 연속 호출 가드).
+> - `harness/tool_exec.py` — `_execute_tool` (timeout/표준화) + `_append_tool_result` (tool 응답 누적).
+> - `harness/dispatch/` — 서브 에이전트 위임: `sequential`(순차 `_dispatch_sub_agent`) · `parallel`(병렬 fan-in) · `spec_filter`(노출 도구 선별·런타임 도구 주입) · `result_format`(AgentReturnEvent→텍스트). 상호재귀(loop↔sequential)는 `sequential` 함수 본문의 단일 late import 로 끊는다.
+> - `harness/state/` — `todo`(Planner 핸들러) · `balancing`(tool 쌍 보존, F1b·R1) · `loop_guard`(호출 시그니처 fingerprint, R4).
+> - `harness/prompt/` — system prompt 조립: `compose`(오케스트레이터/서브/단층) · `sections`(공통 섹션) · `artifacts`(Session Artifacts) · `api_refs`(ApiDoc) · `wind_down`(R7 마무리 지시문).
+> - `harness/__init__.py` — 공개 API(`run_turn`/`TurnBudget`/`ORCHESTRATOR_ID`) + 하위호환 re-export. `from agent.harness import run_turn` 경로 불변(테스트의 `from agent.harness import _x` private 심볼 import 도 보존).
 
 ```
 run_turn(client_id, user_message, *, agent_registry, force_skills=None, ...)
