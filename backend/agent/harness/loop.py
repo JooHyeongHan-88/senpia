@@ -8,10 +8,7 @@ run_turn 한 번 = 사용자 입력 1건에 대한 응답 1턴.
        + state 요약을 합쳐 오케스트레이터 system prompt 를 동적 조립.
     3. _run_agent_turn (공통 provider→tool 루프) 을 depth=0 으로 호출.
        - delta / tool_call / done 이벤트를 그대로 흘려보냄.
-       - tool_call 분기:
-           * add_todo / complete_todo → harness 가 직접 AgentState 갱신.
-           * call_sub_agent (오케스트레이터 전용) → _dispatch_sub_agent 로 격리 실행.
-           * 그 외 도구 → 슬롯 가드 → 통과 시 _execute_tool, 누락 시 AskUserEvent.
+       - 각 tool_call 은 ``call_handlers._handle_tool_call`` 에 위임 (3단계 파이프라인).
     4. 서브 에이전트는 격리된 messages 와 specs(call_sub_agent 제외) 로 자체 turn 을
        수행하고, 모든 raw 이벤트를 AgentProgressEvent 로 래핑해 yield. 마지막 응답에서
        "Task Summary:" 헤더를 추출해 AgentReturnEvent.summary 로 반환.
@@ -25,17 +22,14 @@ run_turn 한 번 = 사용자 입력 1건에 대한 응답 1턴.
 
 세부 책임은 같은 패키지의 형제 모듈로 분리됨 — system prompt 조립(``prompt``),
 상태 변형·히스토리·루프가드(``state``), 디스패치(``dispatch``), 도구 실행(``tool_exec``),
-호출 예산(``budget``). 본 모듈은 그 조각들을 엮는 루프 골격만 보유한다.
+호출 예산(``budget``), tool_call 단건 처리(``call_handlers``), 루프 상수(``constants``).
+본 모듈은 그 조각들을 엮는 루프 골격만 보유한다.
 """
 
 import logging
 from collections.abc import AsyncIterator, Callable
 
-from agent.config import MAX_PARALLEL_SUBAGENTS
-from agent.guard import SlotCheckResult, validate_tool_args
 from agent.models import (
-    MALFORMED_TOOL_ARGS_KEY,
-    AgentReturnEvent,
     AgentState,
     AskUserEvent,
     DoneEvent,
@@ -45,18 +39,13 @@ from agent.models import (
     StreamEvent,
     TodoUpdateEvent,
     ToolCall,
-    ToolResultEvent,
     ToolSpec,
 )
 from agent.registries.agents import AgentRegistry
 from agent.registries.prompts import PromptRegistry
 from agent.registries.skills import Skill, SkillRegistry
 from agent.registries.tools import (
-    ACTIVATE_SKILL,
-    ASK_USER,
     COMPLETE_SUB_AGENT,
-    PLANNER_ADD_TODO,
-    PLANNER_COMPLETE_TODO,
     SUB_AGENT_DISPATCH,
     SUB_AGENTS_PARALLEL_DISPATCH,
     ToolRegistry,
@@ -64,10 +53,17 @@ from agent.registries.tools import (
 from agent.stores.agent_state import AgentStateStore
 from agent.stores.conversation import ConversationStore
 
-from agent.harness.budget import TurnBudget, _WIND_DOWN_REMAINING_CALLS
-from agent.harness.dispatch.parallel import _dispatch_parallel_sub_agents
-from agent.harness.dispatch.result_format import _format_sub_agent_result
-from agent.harness.dispatch.sequential import _dispatch_sub_agent
+from agent.harness.budget import TurnBudget
+from agent.harness.call_handlers import (
+    CallOutcome,
+    TurnContext,
+    _handle_tool_call,
+)
+from agent.harness.constants import (
+    MAX_ITERATIONS_FALLBACK_INSTRUCTION,
+    ORCHESTRATOR_ID,
+    WIND_DOWN_REMAINING_CALLS,
+)
 from agent.harness.dispatch.spec_filter import (
     _inject_runtime_tools,
     _skills_require_runtime_tools,
@@ -81,70 +77,9 @@ from agent.harness.state.balancing import (
     _balance_all_unresolved,
     _balance_unresolved_tool_calls,
 )
-from agent.harness.state.loop_guard import (
-    _LOOP_GUARD_MESSAGE,
-    _call_signature,
-    _record_invalid_call,
-)
-from agent.harness.state.todo import (
-    _TERMINAL_STATUSES,
-    _all_todos_terminal,
-    _build_skill_complete_event,
-    _handle_add_todo,
-    _handle_complete_todo,
-    _mark_running_todo_done,
-)
-from agent.harness.tool_exec import _append_tool_result, _execute_tool
+from agent.harness.state.todo import _TERMINAL_STATUSES, _all_todos_terminal
 
 logger = logging.getLogger(__name__)
-
-ORCHESTRATOR_ID = "orchestrator"
-
-
-# ---------------------------------------------------------------------------
-# 루프 내부 중복 제거 헬퍼 — 여러 sentinel 분기가 공유하는 검증된 공통 로직
-# ---------------------------------------------------------------------------
-
-
-def _emit_missing_slot(
-    state: AgentState | None, call: ToolCall, guard: SlotCheckResult
-) -> tuple[str, AskUserEvent]:
-    """필수 슬롯 누락을 state 에 기록하고 사용자에게 재질문할 AskUserEvent 를 만든다.
-
-    call_sub_agent / call_sub_agents_parallel / 일반 도구 세 분기에 동일하게 중복돼
-    있던 블록을 일원화한다. 제어흐름(interrupted=True; break)은 호출부 인라인 유지.
-
-    Returns:
-        (tool_result placeholder 텍스트, 사용자에게 보낼 AskUserEvent).
-    """
-    first = guard.missing[0]
-    if state is not None:
-        state.missing_slots = {m.key: m.question for m in guard.missing}
-        state.pending_tool = call.name
-        state.pending_args = dict(call.arguments)
-    placeholder = f"[guard] missing required slots: {[m.key for m in guard.missing]}"
-    event = AskUserEvent(
-        question=first.question,
-        slot_key=first.key,
-        options=first.options,
-        tool_name=call.name,
-        input_type="both" if first.options else "text",
-    )
-    return placeholder, event
-
-
-def _invalid_call_message(
-    call: ToolCall, history_calls: set[tuple[str, str, str]], fallback: str
-) -> str:
-    """반복된 형식오류 호출이면 루프가드 메시지, 아니면 fallback 을 반환한다.
-
-    malformed args(F3)와 형식오류 분기(invalid_message)의 '루프가드-or-에러' 결정을
-    일원화한다. `_record_invalid_call` 이 history_calls 에 시그니처를 기록하는
-    부수효과를 그대로 수행한다 (정상↔형식오류 루프 동시 감지).
-    """
-    if _record_invalid_call(call, history_calls):
-        return _LOOP_GUARD_MESSAGE
-    return fallback
 
 
 # ---------------------------------------------------------------------------
@@ -382,6 +317,10 @@ async def _run_agent_turn(
 ) -> AsyncIterator[StreamEvent]:
     """provider→tool 반복 루프 (agent_id 무관 공통).
 
+    각 iteration 은 한 번의 provider 라운드를 돌려(delta/tool_call 수집), tool_call 이
+    있으면 ``_handle_tool_call`` 에 단건씩 위임한다. 핸들러는 이벤트를 즉시 yield 하고
+    ``CallOutcome`` 으로 제어 흐름을(CONTINUE / interrupted / stop) 보고한다.
+
     Args:
         agent_id: 'orchestrator' 또는 서브 에이전트 이름. 로깅·이벤트 라벨용.
         messages: in-place 누적되는 LLM 컨텍스트 (호출자 소유).
@@ -412,28 +351,32 @@ async def _run_agent_turn(
         "agent_registry 가 None 이 아님 — 중첩 sub-agent dispatch 가 열릴 수 있습니다. "
         "_dispatch_sub_agent 가 agent_registry=None 으로 호출하는지 확인하세요."
     )
+
+    ctx = TurnContext(
+        agent_id=agent_id,
+        provider=provider,
+        registry=registry,
+        agent_registry=agent_registry,
+        prompt_registry=prompt_registry,
+        skill_registry=skill_registry,
+        budget=budget,
+        depth=depth,
+        max_iterations=max_iterations,
+        state=state,
+        active_skills=active_skills,
+        recompose_system=recompose_system,
+        messages=messages,
+        turn_messages=turn_messages,
+        history_calls=set(),
+    )
+
     assistant_buffer: list[str] = []
     pending_tool_calls: list[ToolCall] = []
-    history_calls: set[tuple[str, str, str]] = set()
     wind_down_notified = False
 
     for iteration in range(max_iterations):
-        # R7: 남은 호출 여유가 임계 이하로 떨어지면 상한 도달로 hard-cut 되기 전에
-        # 마무리를 지시한다 — 진행은 성공 중인데 예산만 소진돼 사용자 노출 단계
-        # (display_*)가 잘리는 시나리오 방지. messages 에만 추가 (히스토리 비영속).
-        remaining_calls = min(
-            max_iterations - iteration, budget.max_calls - budget.used
-        )
-        if not wind_down_notified and 0 < remaining_calls <= _WIND_DOWN_REMAINING_CALLS:
-            messages.append(
-                Message(role="user", content=_build_wind_down_message(remaining_calls))
-            )
-            wind_down_notified = True
-            logger.info(
-                "agent %s wind-down notified (remaining_calls=%d)",
-                agent_id,
-                remaining_calls,
-            )
+        # R7: 남은 호출 여유가 임계 이하로 떨어지면 hard-cut 전에 마무리를 지시한다.
+        wind_down_notified = _maybe_inject_wind_down(ctx, iteration, wind_down_notified)
 
         if not budget.try_consume():
             yield ErrorEvent(
@@ -489,302 +432,15 @@ async def _run_agent_turn(
 
         interrupted = False
         for call in pending_tool_calls:
-            # F3: provider 가 tool_call 인자 JSON 파싱에 실패한 경우 — 사용자에게 묻지
-            # 않고 LLM 에 재전송을 요구한다 (빈 인자로 오인 → 슬롯 누락 질문 방지).
-            if MALFORMED_TOOL_ARGS_KEY in (call.arguments or {}):
-                result_content = _invalid_call_message(
-                    call,
-                    history_calls,
-                    f"[arg-error] '{call.name}' 도구의 인자가 유효한 JSON 이 "
-                    "아닙니다 (스트리밍 중 잘렸거나 형식이 깨졌습니다). 인자를 더 "
-                    "짧고 정확한 JSON 으로 같은 도구를 다시 호출하세요.",
-                )
-                _append_tool_result(messages, turn_messages, call, result_content)
-                yield ToolResultEvent(
-                    tool_call_id=call.id,
-                    name=call.name,
-                    result=result_content,
-                    is_error=True,
-                )
-                continue
-
-            # activate_skill — SKILL 카탈로그 의미 기반 활성화. turn-local active_skills 갱신.
-            if call.name == ACTIVATE_SKILL and active_skills is not None:
-                skill_name = (call.arguments or {}).get("name", "").strip()
-                existing_names = {s.meta.name for s in active_skills}
-                newly_activated = (
-                    skill_registry.get_by_names([skill_name])
-                    if skill_name and skill_name not in existing_names
-                    else []
-                )
-                active_skills.extend(newly_activated)
-                if newly_activated and recompose_system is not None:
-                    messages[0] = Message(
-                        role="system", content=recompose_system(list(active_skills))
-                    )
-                    yield SkillActiveEvent(skills=[s.meta.name for s in active_skills])
-                    if state is not None:
-                        state.active_skills = [s.meta.name for s in active_skills]
-                result_text = (
-                    f"SKILL '{skill_name}' 활성화됨. 이제 해당 SKILL 의 지침이 컨텍스트에 포함됩니다."
-                    if newly_activated
-                    else (
-                        f"SKILL '{skill_name}' 은(는) 이미 활성화되어 있거나 카탈로그에 없습니다."
-                    )
-                )
-                _append_tool_result(messages, turn_messages, call, result_text)
-                yield ToolResultEvent(
-                    tool_call_id=call.id,
-                    name=call.name,
-                    result=result_text,
-                    is_error=not newly_activated,
-                )
-                continue
-
-            # complete_subagent — 서브 에이전트 종료 sentinel (turn_messages=None 이 서브 에이전트 지표).
-            if call.name == COMPLETE_SUB_AGENT and turn_messages is None:
-                result_text = (call.arguments or {}).get("summary", "")
-                _append_tool_result(messages, turn_messages, call, result_text)
-                yield ToolResultEvent(
-                    tool_call_id=call.id, name=call.name, result=result_text
-                )
-                return  # 서브 에이전트 완료 — _dispatch_sub_agent 가 ToolResultEvent 를 캡처
-
-            # PLANNER 도구는 state 가 있을 때만 (서브 에이전트도 sub_state 가 주입되므로 동작함).
-            if call.name == PLANNER_ADD_TODO and state is not None:
-                result_text = _handle_add_todo(state, call.arguments)
-                _append_tool_result(messages, turn_messages, call, result_text)
-                yield ToolResultEvent(
-                    tool_call_id=call.id, name=call.name, result=result_text
-                )
-                yield TodoUpdateEvent(todos=list(state.todo_list))
-                continue
-
-            if call.name == PLANNER_COMPLETE_TODO and state is not None:
-                result_text = _handle_complete_todo(state, call.arguments)
-                _append_tool_result(messages, turn_messages, call, result_text)
-                yield ToolResultEvent(
-                    tool_call_id=call.id, name=call.name, result=result_text
-                )
-                yield TodoUpdateEvent(todos=list(state.todo_list))
-                if _all_todos_terminal(state):
-                    yield _build_skill_complete_event(state)
-                continue
-
-            # ask_user sentinel — LLM 능동 보완 질문. tool_result placeholder 한 줄 + AskUserEvent 후 turn 중단.
-            if call.name == ASK_USER:
-                args = call.arguments or {}
-                question = (args.get("question") or "").strip()
-                options = args.get("options")
-                input_type = args.get("input_type", "both")
-
-                # 정규화: options 가 비어 있으면 자유입력만, 비정상 input_type 은 both 로 폴백.
-                if not options:
-                    options = None
-                    input_type = "text"
-                elif input_type not in ("choice", "text", "both"):
-                    input_type = "both"
-
-                if state is not None:
-                    state.pending_question = question
-
-                placeholder = f"[ask_user] 사용자에게 질문을 던졌습니다: {question}"
-                _append_tool_result(messages, turn_messages, call, placeholder)
-                yield ToolResultEvent(
-                    tool_call_id=call.id, name=call.name, result=placeholder
-                )
-                yield AskUserEvent(
-                    question=question,
-                    slot_key=ASK_USER,
-                    options=options,
-                    tool_name=ASK_USER,
-                    input_type=input_type,
-                )
+            outcome = CallOutcome()
+            async for ev in _handle_tool_call(ctx, call, outcome):
+                yield ev
+            if outcome.stop:
+                # complete_subagent — 즉시 종료 (남은 호출 무시, 보정 없음).
+                return
+            if outcome.interrupted:
                 interrupted = True
                 break
-
-            # 서브 에이전트 디스패치 — async generator nesting 으로 통과.
-            if call.name == SUB_AGENT_DISPATCH and agent_registry is not None:
-                guard = validate_tool_args(call.arguments, registry.get(call.name))
-                if guard.invalid_message:
-                    # call_sub_agent 인자 형식 오류 — 사용자 미개입, LLM self-correct.
-                    result_content = _invalid_call_message(
-                        call, history_calls, guard.invalid_message
-                    )
-                    _append_tool_result(messages, turn_messages, call, result_content)
-                    yield ToolResultEvent(
-                        tool_call_id=call.id,
-                        name=call.name,
-                        result=result_content,
-                        is_error=True,
-                    )
-                    continue
-                if not guard.ok:
-                    placeholder, ask_ev = _emit_missing_slot(state, call, guard)
-                    _append_tool_result(messages, turn_messages, call, placeholder)
-                    yield ask_ev
-                    interrupted = True
-                    break
-
-                captured_summary = (
-                    f"[error] {call.arguments.get('agent_name', '?')}: "
-                    "sub-agent 가 요약을 반환하지 않음"
-                )
-                sub_interrupted = False
-                async for sub_ev in _dispatch_sub_agent(
-                    call=call,
-                    parent_agent_id=agent_id,
-                    agent_registry=agent_registry,
-                    skill_registry=skill_registry,
-                    prompt_registry=prompt_registry,
-                    registry=registry,
-                    provider=provider,
-                    budget=budget,
-                    depth=depth + 1,
-                    max_iterations=max_iterations,
-                    orchestrator_state=state,
-                ):
-                    yield sub_ev
-                    if isinstance(sub_ev, AgentReturnEvent):
-                        # todo_log 와 통계를 포함한 구조화 텍스트로 LLM 컨텍스트에 주입.
-                        captured_summary = _format_sub_agent_result(sub_ev)
-                    elif isinstance(sub_ev, AskUserEvent):
-                        # 서브 에이전트 슬롯 부족 — 사용자 질문을 그대로 전달 후 중단.
-                        sub_interrupted = True
-
-                if sub_interrupted:
-                    interrupted = True
-                    break
-
-                # 성공적 완료 — pending_sub_agent 초기화
-                if state is not None:
-                    dispatched_name = (call.arguments or {}).get("agent_name")
-                    if state.pending_sub_agent == dispatched_name:
-                        state.pending_sub_agent = None
-                        state.pending_sub_task = None
-                        state.missing_slots = {}
-
-                _append_tool_result(messages, turn_messages, call, captured_summary)
-                yield ToolResultEvent(
-                    tool_call_id=call.id, name=call.name, result=captured_summary
-                )
-                continue
-
-            # 병렬 서브 에이전트 디스패치 — 독립 작업들을 동시에 실행하고 단일 결과로 합침.
-            if call.name == SUB_AGENTS_PARALLEL_DISPATCH and agent_registry is not None:
-                guard = validate_tool_args(call.arguments, registry.get(call.name))
-                if guard.invalid_message:
-                    # tasks 형식 오류 — 사용자 미개입, LLM self-correct.
-                    result_content = _invalid_call_message(
-                        call, history_calls, guard.invalid_message
-                    )
-                    _append_tool_result(messages, turn_messages, call, result_content)
-                    yield ToolResultEvent(
-                        tool_call_id=call.id,
-                        name=call.name,
-                        result=result_content,
-                        is_error=True,
-                    )
-                    continue
-                if not guard.ok:
-                    placeholder, ask_ev = _emit_missing_slot(state, call, guard)
-                    _append_tool_result(messages, turn_messages, call, placeholder)
-                    yield ask_ev
-                    interrupted = True
-                    break
-
-                # 병렬 디스패처가 모든 서브 에이전트 이벤트를 인터리브해 yield 하고,
-                # 완료 후 통합 요약을 result_holder["combined"] 에 채운다.
-                parallel_result: dict[str, str] = {}
-                async for sub_ev in _dispatch_parallel_sub_agents(
-                    call=call,
-                    parent_agent_id=agent_id,
-                    agent_registry=agent_registry,
-                    skill_registry=skill_registry,
-                    prompt_registry=prompt_registry,
-                    registry=registry,
-                    provider=provider,
-                    budget=budget,
-                    depth=depth + 1,
-                    max_iterations=max_iterations,
-                    orchestrator_state=state,
-                    max_parallel=MAX_PARALLEL_SUBAGENTS,
-                    result_holder=parallel_result,
-                ):
-                    yield sub_ev
-
-                captured_summary = parallel_result.get(
-                    "combined", "[error] 병렬 위임 결과가 비어 있습니다"
-                )
-                _append_tool_result(messages, turn_messages, call, captured_summary)
-                yield ToolResultEvent(
-                    tool_call_id=call.id, name=call.name, result=captured_summary
-                )
-                continue
-
-            tool = registry.get(call.name)
-            guard = validate_tool_args(call.arguments, tool)
-            if guard.invalid_message:
-                # 형식 오류 — 사용자에게 묻지 않고 LLM 에 도구 에러로 회신해 self-correct.
-                result_content = _invalid_call_message(
-                    call, history_calls, guard.invalid_message
-                )
-                _append_tool_result(messages, turn_messages, call, result_content)
-                yield ToolResultEvent(
-                    tool_call_id=call.id,
-                    name=call.name,
-                    result=result_content,
-                    is_error=True,
-                )
-                continue
-            if not guard.ok:
-                placeholder, ask_ev = _emit_missing_slot(state, call, guard)
-                _append_tool_result(messages, turn_messages, call, placeholder)
-                yield ask_ev
-                interrupted = True
-                break
-
-            call_sig = _call_signature(call)
-            if call_sig in history_calls:
-                result_content = _LOOP_GUARD_MESSAGE
-                _append_tool_result(messages, turn_messages, call, result_content)
-                yield ToolResultEvent(
-                    tool_call_id=call.id,
-                    name=call.name,
-                    result=result_content,
-                    is_error=True,
-                )
-                if state is not None:
-                    if state.pending_tool == call.name:
-                        state.pending_tool = None
-                        state.pending_args = {}
-                        state.missing_slots = {}
-                continue
-            else:
-                history_calls.add(call_sig)
-
-            result = await _execute_tool(call, registry)
-            _append_tool_result(messages, turn_messages, call, result.content)
-            yield ToolResultEvent(
-                tool_call_id=call.id,
-                name=call.name,
-                result=result.content,
-                data=result.data,
-                is_error=result.is_error,
-            )
-
-            if state is not None:
-                todo_updated = _mark_running_todo_done(
-                    state, call.name, result.content, is_error=result.is_error
-                )
-                if todo_updated:
-                    yield TodoUpdateEvent(todos=list(state.todo_list))
-                    if _all_todos_terminal(state):
-                        yield _build_skill_complete_event(state)
-                if state.pending_tool == call.name:
-                    state.pending_tool = None
-                    state.pending_args = {}
-                    state.missing_slots = {}
 
         if interrupted:
             # 배치 도구 호출 중간에 중단되면 뒤따르는 tool_call 이 응답 없이 남는다.
@@ -792,49 +448,94 @@ async def _run_agent_turn(
             _balance_unresolved_tool_calls(messages, turn_messages, assistant_msg)
             return
     else:
-        # 모든 todo 가 terminal 상태면 작업은 완료됐으나 예산만 소진된 것 — "복구"로 판정.
-        is_recovered = (
-            state is not None and bool(state.todo_list) and _all_todos_terminal(state)
-        )
-        if is_recovered:
-            msg = (
-                f"[max_iterations] {agent_id}: 반복 상한({max_iterations}회)에 도달했으나 "
-                "모든 작업이 완료 상태입니다."
-            )
-        else:
-            msg = (
-                f"[max_iterations] {agent_id}: {max_iterations}회 반복 상한에 도달했습니다. "
-                "작업이 완전히 완료되지 않았을 수 있습니다."
-            )
-        logger.warning(
-            "agent harness reached max_iterations=%d (agent=%s, recovered=%s)",
-            max_iterations,
-            agent_id,
-            is_recovered,
-        )
-        fallback_msg = Message(
-            role="user",
-            content="[System] 에이전트 반복 상한에 도달했거나 작업이 중단되었습니다. 지금까지 완료한 작업과 실패한 원인을 정리하여 사용자에게 자연어로 최종 답변을 작성하세요. 도구를 호출하지 마세요.",
-        )
-        messages.append(fallback_msg)
+        async for ev in _emit_max_iterations_fallback(ctx):
+            yield ev
 
-        assistant_buffer.clear()
-        async for event in provider.astream(messages, []):
-            if event.type == "delta":
-                assistant_buffer.append(event.content)
-                yield event
-            elif event.type == "done":
-                break
 
-        assistant_text = "".join(assistant_buffer)
-        if assistant_text:
-            fallback_response = Message(role="assistant", content=assistant_text)
-            messages.append(fallback_response)
-            if turn_messages is not None:
-                turn_messages.append(fallback_response)
-            # 자연어 응답이 생성됐으므로 ErrorEvent 는 프론트에 노출하지 않는다.
-            # is_fallback=True 플래그만 보내 UI 가 마지막 메시지를 스타일링하도록 신호.
-            yield ErrorEvent(message=msg, is_fallback=True, is_recovered=is_recovered)
-        else:
-            # fallback LLM 호출 자체가 실패한 경우 — 일반 에러로 노출.
-            yield ErrorEvent(message=msg)
+# ---------------------------------------------------------------------------
+# 루프 생애주기 헬퍼 — wind-down 주입 + max_iterations fallback
+# ---------------------------------------------------------------------------
+
+
+def _maybe_inject_wind_down(
+    ctx: TurnContext, iteration: int, already_notified: bool
+) -> bool:
+    """남은 호출 여유가 임계 이하면 [System] 마무리 지시문을 messages 에 1회 주입한다 (R7).
+
+    진행은 성공 중인데 예산(반복 상한·turn budget)만 소진돼 사용자 노출 단계(display_*)가
+    잘리는 시나리오를 방지한다. 히스토리에는 영속하지 않는다 (messages 한정).
+
+    Returns:
+        갱신된 notified 플래그 — 한 번 주입되면 이후 iteration 에서 재주입하지 않는다.
+    """
+    if already_notified:
+        return True
+    remaining_calls = min(
+        ctx.max_iterations - iteration, ctx.budget.max_calls - ctx.budget.used
+    )
+    if not 0 < remaining_calls <= WIND_DOWN_REMAINING_CALLS:
+        return False
+    ctx.messages.append(
+        Message(role="user", content=_build_wind_down_message(remaining_calls))
+    )
+    logger.info(
+        "agent %s wind-down notified (remaining_calls=%d)",
+        ctx.agent_id,
+        remaining_calls,
+    )
+    return True
+
+
+async def _emit_max_iterations_fallback(
+    ctx: TurnContext,
+) -> AsyncIterator[StreamEvent]:
+    """반복 상한 소진 시 도구 없는 최종 요약 라운드를 돌린다 (F6).
+
+    모든 todo 가 terminal 이면 '복구'(작업 완료·예산 소진)로 판정해 초록 점선,
+    아니면 '미완료'로 빨강 점선으로 프론트가 스타일링하도록 is_recovered 플래그를 싣는다.
+    """
+    is_recovered = (
+        ctx.state is not None
+        and bool(ctx.state.todo_list)
+        and _all_todos_terminal(ctx.state)
+    )
+    if is_recovered:
+        msg = (
+            f"[max_iterations] {ctx.agent_id}: 반복 상한({ctx.max_iterations}회)에 "
+            "도달했으나 모든 작업이 완료 상태입니다."
+        )
+    else:
+        msg = (
+            f"[max_iterations] {ctx.agent_id}: {ctx.max_iterations}회 반복 상한에 "
+            "도달했습니다. 작업이 완전히 완료되지 않았을 수 있습니다."
+        )
+    logger.warning(
+        "agent harness reached max_iterations=%d (agent=%s, recovered=%s)",
+        ctx.max_iterations,
+        ctx.agent_id,
+        is_recovered,
+    )
+    ctx.messages.append(
+        Message(role="user", content=MAX_ITERATIONS_FALLBACK_INSTRUCTION)
+    )
+
+    buffer: list[str] = []
+    async for event in ctx.provider.astream(ctx.messages, []):
+        if event.type == "delta":
+            buffer.append(event.content)
+            yield event
+        elif event.type == "done":
+            break
+
+    assistant_text = "".join(buffer)
+    if assistant_text:
+        fallback_response = Message(role="assistant", content=assistant_text)
+        ctx.messages.append(fallback_response)
+        if ctx.turn_messages is not None:
+            ctx.turn_messages.append(fallback_response)
+        # 자연어 응답이 생성됐으므로 ErrorEvent 는 프론트에 노출하지 않는다.
+        # is_fallback=True 플래그만 보내 UI 가 마지막 메시지를 스타일링하도록 신호.
+        yield ErrorEvent(message=msg, is_fallback=True, is_recovered=is_recovered)
+    else:
+        # fallback LLM 호출 자체가 실패한 경우 — 일반 에러로 노출.
+        yield ErrorEvent(message=msg)

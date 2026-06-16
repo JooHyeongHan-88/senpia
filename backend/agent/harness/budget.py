@@ -8,11 +8,6 @@
 from dataclasses import dataclass
 from typing import ClassVar
 
-# 남은 provider 호출(반복 상한·turn budget 중 작은 쪽)이 이 수 이하로 떨어지면
-# LLM 에 마무리(wind-down)를 지시한다. 2 = '마지막 도구 실행 1회 + 최종 요약 1회'
-# — 이미 저장된 산출물을 display_* 로 사용자에게 노출할 최소 여유.
-_WIND_DOWN_REMAINING_CALLS = 2
-
 
 @dataclass
 class TurnBudget:
