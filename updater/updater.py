@@ -24,6 +24,10 @@ WAIT_INTERVAL = 0.25
 POST_EXIT_GRACE = 3.0
 REPLACE_RETRY = 30
 REPLACE_RETRY_INTERVAL = 0.5
+# .old 백업 삭제는 옛 EXE 이미지/AV 잠금이 풀린 뒤에야 성공한다. 스왑 직후 한 번만
+# 시도하면 실패해 .old 가 잔존하므로, 잠금이 풀릴 때까지 넉넉히 재시도한다.
+BACKUP_DELETE_RETRY = 20
+BACKUP_DELETE_INTERVAL = 0.5
 
 
 def log(msg: str) -> None:
@@ -83,6 +87,9 @@ def replace(new_exe: Path, current_exe: Path) -> bool:
     rename-to-backup 전략이 이를 우회한다:
       1. current_exe → current_exe.old  (rename — 이름 변경은 잠긴 파일에도 동작)
       2. new_exe     → current_exe      (rename — 목적지가 비어 있으므로 항상 성공)
+
+    .old 백업 정리는 잠금이 풀린 뒤에야 안정적으로 가능하므로 여기서 하지 않고
+    스왑·spawn 이후 cleanup_backup 에서 재시도 삭제한다.
     """
     backup = current_exe.with_suffix(".old")
     last_err: Exception | None = None
@@ -110,12 +117,6 @@ def replace(new_exe: Path, current_exe: Path) -> bool:
                     pass
                 raise e
 
-            # 3단계: .old 파일 정리 (실패해도 무방).
-            try:
-                backup.unlink()
-            except OSError:
-                pass
-
             return True
 
         except OSError as e:
@@ -124,6 +125,55 @@ def replace(new_exe: Path, current_exe: Path) -> bool:
 
     log(f"replace failed after {REPLACE_RETRY} attempts: {last_err}")
     return False
+
+
+def cleanup_backup(current_exe: Path) -> bool:
+    """스왑으로 생긴 {stem}.old 백업을 잠금이 풀릴 때까지 재시도 삭제한다.
+
+    스왑 직후 옛 EXE 이미지가 Windows/AV 에 잠겨 단발 삭제는 실패하므로(.old 잔존),
+    spawn 이후 시점에 재시도한다. 이미 없으면 성공으로 간주한다.
+
+    Args:
+        current_exe (Path): 교체 완료된 현재 EXE 경로. 형제 {stem}.old 가 대상.
+
+    Returns:
+        bool: 삭제 성공(또는 애초에 없음) 시 True, 끝까지 실패 시 False.
+    """
+    backup = current_exe.with_suffix(".old")
+
+    for attempt in range(BACKUP_DELETE_RETRY):
+        try:
+            backup.unlink()
+            return True
+        except FileNotFoundError:
+            return True
+        except OSError as e:
+            last_err = e
+            time.sleep(BACKUP_DELETE_INTERVAL)
+
+    log(f"cleanup_backup failed after {BACKUP_DELETE_RETRY} attempts: {last_err}")
+    return False
+
+
+def notify_shell(folder: Path) -> None:
+    """Windows 탐색기에 폴더 갱신을 알려 stale 한 파일 뷰를 강제 새로고침한다.
+
+    빠른 연속 rename/삭제에 대해 탐색기가 shell-change 알림을 놓쳐 옛 이름(.old)을
+    캐시에 남기는 문제를 우회한다(수동 F5 없이 정상 표시).
+    """
+    if sys.platform != "win32":
+        return
+
+    try:
+        import ctypes
+
+        SHCNE_UPDATEDIR = 0x00001000
+        SHCNF_PATHW = 0x0005
+        ctypes.windll.shell32.SHChangeNotify(
+            SHCNE_UPDATEDIR, SHCNF_PATHW, ctypes.c_wchar_p(str(folder)), None
+        )
+    except Exception as e:
+        log(f"notify_shell failed: {e}")
 
 
 def spawn(current_exe: Path) -> None:
@@ -178,6 +228,11 @@ def main() -> int:
     except Exception as e:
         log(f"spawn failed: {e}")
         return 6
+
+    # 새 EXE 를 먼저 띄운 뒤(빠른 재시작) .old 를 정리한다 — 이 시점이면 옛 EXE 잠금이
+    # 풀려 삭제가 안정적으로 성공하고, 탐색기도 강제 새로고침으로 정상 표시된다.
+    cleanup_backup(current_exe)
+    notify_shell(current_exe.parent)
 
     log("done")
     return 0

@@ -15,6 +15,7 @@
       {#if ui.restarting}
         <h3>재시작 중…</h3>
         <p>새 버전으로 교체 후 자동으로 다시 열립니다.</p>
+        <p class="muted">새 버전 페이지가 열리면 이 페이지는 닫아 주세요.</p>
       {:else if ui.applyState?.status === "error"}
         <h3>업데이트 실패</h3>
         <p class="error">{ui.applyState.message}</p>

@@ -15,6 +15,9 @@
 ③ Updater.exe       부모 pid 폴링(최대 60s) → POST_EXIT_GRACE 3s 추가 대기
 ④ rename-to-backup  current → .old (rename은 잠긴 파일도 허용)
                     → new → current → 실패 시 .old 복원 후 재기동
+                    → 새 EXE spawn 후 .old 재시도 삭제(cleanup_backup, 잠금 풀릴 때까지)
+                      + SHChangeNotify 로 탐색기 강제 새로고침(notify_shell)
+                    → 새 EXE 기동 시 cleanup_stale_backup 이 잔존 .old 1회 스윕(안전망)
 ```
 
 **절대 변경 금지 ①**: 방금 종료된 EXE의 잔존 잠금 + AV 스캔 때문에 `os.replace(new, current)` 직접 시도는

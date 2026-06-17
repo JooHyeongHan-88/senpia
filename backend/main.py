@@ -15,7 +15,7 @@ from agent.registries.prompts import registry as prompt_registry
 from agent.registries.skills import registry as skill_registry
 from api import router as api_router
 from api.deps import state_store
-from core import browser, content_sync
+from core import browser, content_sync, updater
 from core.browser import open_browser, watchdog
 from core.config import (
     ASSETS_DIR,
@@ -135,5 +135,8 @@ if __name__ == "__main__":
     if WEB_DIR.exists():
         threading.Thread(target=watchdog, daemon=True).start()
         threading.Thread(target=open_browser, daemon=True).start()
+        # 자동 업데이트 직후 잔존할 수 있는 {stem}.old 백업을 기동 시 1회 청소(안전망).
+        # frozen 에서만 실효, 부팅을 막지 않도록 데몬 스레드로 띄운다.
+        threading.Thread(target=updater.cleanup_stale_backup, daemon=True).start()
 
     server.run(sockets=[sock])
