@@ -3,19 +3,30 @@
 ## 자동 업데이트 — 4단계 흐름
 
 ```
-① check_latest()    APP_LATEST_JSON_URL(GitHub Releases) GET, 5분 캐시
-                    QA 채널은 이 단계에서 즉시 차단(update_available=False, 네트워크 호출 없음)
-                    URL prefix(REPO_BASE_URL startswith)·sha256 hex(64자) 검증 → 실패 시 silently False
-② apply_update()    APP_REPO_READ_TOKEN(read-only PAT)으로 인증 스트리밍 다운로드
-                    → sha256 검증 → {stem}.new.exe staging
+① check_latest()    GitHub REST API: GET {api_base}/repos/{owner}/{repo}/releases/latest
+                    (api_base·owner·repo 는 APP_REPO_BASE_URL 에서 유도, 5분 캐시)
+                    → assets[] 에서 latest.json 에셋의 API url 찾아 octet-stream 으로 받아 파싱
+                    → 같은 응답에서 EXE 에셋 API url 역참조해 meta["_download_url"] stash
+                    QA 채널은 이 단계 직전 즉시 차단(update_available=False, 네트워크 호출 없음)
+                    url(브라우저) prefix·sha256 hex(64자) 검증 → 실패 시 silently False
+② apply_update()    meta["_download_url"](EXE 에셋 API url)을 read-only PAT + octet-stream 으로
+                    인증 스트리밍 다운로드 → sha256 검증 → {stem}.new.exe staging
                     → DETACHED Updater.exe Popen(pid, new, current) → 1s 후 server.should_exit
 ③ Updater.exe       부모 pid 폴링(최대 60s) → POST_EXIT_GRACE 3s 추가 대기
 ④ rename-to-backup  current → .old (rename은 잠긴 파일도 허용)
                     → new → current → 실패 시 .old 복원 후 재기동
 ```
 
-**절대 변경 금지**: 방금 종료된 EXE의 잔존 잠금 + AV 스캔 때문에 `os.replace(new, current)` 직접 시도는
+**절대 변경 금지 ①**: 방금 종료된 EXE의 잔존 잠금 + AV 스캔 때문에 `os.replace(new, current)` 직접 시도는
 `ERROR_ACCESS_DENIED` 발생. **rename-to-backup 전략**으로 30회 × 0.5s 재시도. 이 전략으로 회귀시키지 말 것.
+
+**절대 변경 금지 ② (private 레포 다운로드 경로)**: 릴리즈 에셋을 브라우저 다운로드 URL
+(`.../releases/latest/download/<asset>` 또는 `.../releases/download/<tag>/<asset>`)로 받지 말 것.
+그 경로는 **웹 세션 쿠키 인증 전용**이라 `Authorization: token <PAT>` 헤더를 무시하고, private 레포면
+**404**(403 아님 — 존재 은닉)를 돌려준다. 반드시 REST API 에셋 엔드포인트
+(`.../api/v3/repos/.../releases/assets/{id}`)에 `Accept: application/octet-stream` 헤더로 받아야
+PAT 인증이 통하고 바이너리 본문이 온다(octet-stream 없으면 에셋 메타데이터 JSON 반환). latest.json 의
+`url`(브라우저 경로)은 **다운로드에 쓰지 않고 EXE 파일명 추출용**으로만 쓴다(`_exe_asset_name`).
 
 진행 상태: `GET /api/update/status` → `{status, progress, total, message, target_version}`  
 (`idle|downloading|verifying|staging|restarting|error`)

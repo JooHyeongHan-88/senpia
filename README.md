@@ -238,7 +238,7 @@ App.exe 실행
 브라우저 → http://127.0.0.1:{고정 포트}   (frontend 는 상대 경로만 쓰므로 포트를 몰라도 됨)
   ├─ initApp(): localStorage 에서 세션 복원 → /api/presence SSE 오픈
   ├─ /api/conversation/restore: localStorage 히스토리 → 백엔드 LLM context 주입
-  └─ /api/update/check: Nexus latest.json 비교 (5분 캐시)
+  └─ /api/update/check: GitHub REST API releases/latest 조회 → latest.json 에셋 비교 (5분 캐시)
 ```
 
 ### 세션 관리
@@ -261,11 +261,12 @@ App.exe 실행
 ### 자동 업데이트 흐름
 
 ```
-① 앱 시작 → /api/update/check → APP_LATEST_JSON_URL(GitHub Releases) latest.json 비교
+① 앱 시작 → /api/update/check → GitHub REST API {api_base}/repos/{owner}/{repo}/releases/latest 조회
+   → assets[]에서 latest.json 에셋을 octet-stream으로 받아 버전 비교
    QA 채널은 업데이트 차단(네트워크 호출 없이 즉시 반환)
 ② 새 버전 있으면 UI 배너 표시 → 사용자 "지금 업데이트" 클릭
 ③ /api/update/apply:
-     - APP_REPO_READ_TOKEN(read-only PAT)으로 새 App.exe 인증 다운로드 (스트리밍, sha256 검증)
+     - EXE 에셋 API URL을 APP_REPO_READ_TOKEN(read-only PAT) + octet-stream 헤더로 인증 다운로드 (스트리밍, sha256 검증)
      - 번들된 Updater.exe 를 detached 프로세스로 기동
      - uvicorn graceful shutdown
 ④ Updater.exe:
@@ -296,10 +297,11 @@ version = "0.2.0"
 
 ```dotenv
 APP_NAME=MyAgent                          # EXE 파일명, settings.json 경로
-APP_REPO_BASE_URL=https://<ghe-host>/<org>/<repo>          # 레포 루트
-APP_LATEST_JSON_URL=https://<ghe-host>/<org>/<repo>/releases/latest/download/latest.json
-APP_REPO_READ_TOKEN=ghp_...               # 읽기 전용 PAT — EXE에 번들됨 (latest.json·EXE 다운로드 인증)
+APP_REPO_BASE_URL=https://<ghe-host>/<org>/<repo>          # 레포 루트 (REST API base·owner/repo 유도)
+APP_REPO_READ_TOKEN=ghp_...               # 읽기 전용 PAT — EXE에 번들됨 (릴리즈 메타·EXE 다운로드 인증)
 ```
+
+> updater는 `APP_REPO_BASE_URL`에서 REST API base(`.../api/v3`)와 owner/repo를 자동 유도한다. private 레포 에셋은 브라우저 다운로드 URL이 PAT 헤더를 무시하므로(404), 메타·EXE 모두 REST API(`releases/latest` + `assets/{id}`)로 받는다. 그래서 별도 latest.json 포인터 URL 환경변수는 필요 없다.
 
 업로드 인증은 **gh CLI가 담당**한다. `.env`에 쓰기 토큰을 두지 않는다.
 
@@ -365,7 +367,7 @@ pwsh packaging/release-dryrun.ps1 -Channel qa -Force  # dirty 브랜치에서도
 }
 ```
 
-`url`은 **버전 핀 에셋 경로**(`releases/download/v{version}/...`)다. `releases/latest/download/` 포인터는 full release(비-prerelease)만 가리키므로 QA 빌드는 잡히지 않는다.
+`url`은 **버전 핀 에셋 경로**(`releases/download/v{version}/...`, 브라우저 형식)다. updater는 이 url을 다운로드에 직접 쓰지 않고 **EXE 파일명 추출용**으로만 사용한다 — 실제 다운로드는 `releases/latest` REST API 응답의 `assets[].url`(API 에셋 경로)을 octet-stream으로 받는다. `releases/latest` API는 full release(비-prerelease)만 반환하므로 QA 빌드는 잡히지 않는다.
 
 ## 업데이트 API
 
