@@ -62,3 +62,4 @@ package-lock.json
 .antigravitycli
 .env
 .omc
+.claude/worktrees/
