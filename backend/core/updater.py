@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -42,6 +43,26 @@ def _auth_headers() -> dict[str, str]:
     if config.REPO_READ_TOKEN:
         return {"Authorization": f"token {config.REPO_READ_TOKEN}"}
     return {}
+
+
+def _make_ssl_verify() -> bool | ssl.SSLContext:
+    """httpx SSL 검증 설정.
+
+    APP_REPO_TLS_VERIFY=false: 검증 비활성화 (내부망 자체 서명 인증서 최후 수단).
+    Windows: certifi 대신 Windows 인증서 저장소를 써서 회사 내부 CA 를 자동 신뢰한다.
+    certifi 는 Windows 인증서 저장소를 읽지 않아 기업 내부 CA 가 누락될 수 있다.
+
+    Returns:
+        False(검증 비활성), ssl.SSLContext(Windows 시스템 CA), 또는 True(certifi 기본값).
+    """
+    if not config.REPO_TLS_VERIFY:
+        return False
+    if sys.platform == "win32":
+        return ssl.create_default_context()
+    return True
+
+
+_SSL_VERIFY: bool | ssl.SSLContext = _make_ssl_verify()
 
 
 # in-memory cache
@@ -131,7 +152,7 @@ def check_latest(force: bool = False) -> dict:
 
     try:
         with httpx.Client(
-            timeout=UPDATE_CHECK_TIMEOUT, follow_redirects=True
+            timeout=UPDATE_CHECK_TIMEOUT, follow_redirects=True, verify=_SSL_VERIFY
         ) as client:
             r = client.get(LATEST_JSON_URL, headers=_auth_headers())
             r.raise_for_status()
@@ -197,7 +218,9 @@ def _download(url: str, dest: Path, expected_size: int) -> None:
         status="downloading", progress=0, total=expected_size, message="다운로드 중..."
     )
 
-    with httpx.Client(timeout=UPDATE_DOWNLOAD_TIMEOUT, follow_redirects=True) as client:
+    with httpx.Client(
+        timeout=UPDATE_DOWNLOAD_TIMEOUT, follow_redirects=True, verify=_SSL_VERIFY
+    ) as client:
         # GHE 에셋은 서명된 URL 로 302 redirect 된다. httpx 는 cross-host redirect 시
         # Authorization 을 자동 제거하므로(서명 URL 은 토큰 불필요) 안전하다.
         with client.stream("GET", url, headers=_auth_headers()) as r:

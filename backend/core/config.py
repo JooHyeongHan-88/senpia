@@ -123,6 +123,12 @@ LATEST_JSON_URL: str = os.environ.get(
 # 업로드용 쓰기 자격증명(APP_REPO_USER/PASSWORD)과 분리해 EXE 에는 이 토큰만 번들한다.
 # 빈 값이면 Authorization 헤더 없이 익명 GET (Nexus·공개 저장소 하위호환).
 REPO_READ_TOKEN: str = os.environ.get("APP_REPO_READ_TOKEN", "")
+# TLS 검증 — 기본값 True(검증). GHE 내부 CA 를 Windows 인증서 저장소에 추가했는데도
+# SSLError 가 나면 False 로 비활성화한다(내부망 자체 서명 인증서 대응 최후 수단).
+REPO_TLS_VERIFY: bool = os.environ.get("APP_REPO_TLS_VERIFY", "true").lower() not in (
+    "0",
+    "false",
+)
 UPDATE_CHECK_TIMEOUT: int = int(os.environ.get("APP_UPDATE_CHECK_TIMEOUT", "5"))
 UPDATE_DOWNLOAD_TIMEOUT: int = int(os.environ.get("APP_UPDATE_DOWNLOAD_TIMEOUT", "60"))
 UPDATE_CHECK_CACHE_TTL: int = int(os.environ.get("APP_UPDATE_CHECK_CACHE_TTL", "300"))
