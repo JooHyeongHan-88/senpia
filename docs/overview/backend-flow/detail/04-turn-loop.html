@@ -113,11 +113,11 @@
       <span class="back-lbl">↻ CONTINUE → 다음 iteration</span>
 
       <div class="flow">
-        <div class="gate"><span class="q">◇ 반복 잔여 ≤ _WIND_DOWN_REMAINING_CALLS(2)? (R7)</span><small>min(반복 잔여, budget 잔여) 계산</small></div>
-        <div class="split">
-          <div class="col">
+        <!-- R7 wind-down: 임박하면 옆으로 빠져 마무리 지시 주입(후 같은 iteration 계속) -->
+        <div class="guard">
+          <div class="gate"><span class="q">◇ 반복 잔여 ≤ _WIND_DOWN_REMAINING_CALLS(2)? (R7)</span><small>min(반복 잔여, budget 잔여)</small></div>
+          <div class="exit right">
             <span class="edge-lbl yes">예 — 임박</span>
-            <div class="arrow short"></div>
             <div class="node cat-safe">
               <div class="node-cat">Wind-down 주입 (R7)</div>
               <div class="node-title">[System] 마무리 지시문 messages 에 1회 삽입</div>
@@ -125,88 +125,74 @@
               <div class="desc">잔여 1회면 "도구 금지·최종 답변" 변형 문구. LLM 이 무시하면 for-else fallback(F6) 이 안전망.</div>
             </div>
           </div>
-          <div class="col">
-            <span class="edge-lbl no">아니오</span>
-          </div>
         </div>
-        <div class="arrow"></div>
+        <div class="arrow lbl" data-label="아니오 / 주입 후 계속"></div>
 
-        <div class="gate"><span class="q">◇ budget.try_consume() 성공?</span><small>max_agent_calls 상한 검사</small></div>
-        <div class="split">
-          <div class="col">
+        <!-- 예산 게이트: 소진이면 옆으로 빠져 종료 -->
+        <div class="guard">
+          <div class="gate"><span class="q">◇ budget.try_consume() 성공?</span><small>max_agent_calls 상한 검사</small></div>
+          <div class="exit right">
             <span class="edge-lbl no">예산 소진</span>
-            <div class="arrow short"></div>
-            <div class="node cat-safe">
-              <div class="node-title">ErrorEvent(budget 초과) + DoneEvent</div>
-            </div>
+            <div class="node cat-safe"><div class="node-title">ErrorEvent(budget 초과) + DoneEvent</div></div>
             <div class="arrow short"></div>
             <div class="term">■ exit — 예산 소진</div>
           </div>
-          <div class="col">
-            <span class="edge-lbl yes">소비 성공</span>
+        </div>
+        <div class="arrow lbl" data-label="소비 성공"></div>
+
+        <div class="node cat-core wide">
+          <div class="node-cat">스트리밍</div>
+          <div class="node-title">provider.astream(messages, tool_specs) → 이벤트 yield</div>
+          <div class="mod">delta·reasoning·tool_call·DoneEvent 를 순서대로 emit</div>
+        </div>
+        <div class="arrow"></div>
+
+        <!-- tool_call 게이트: 없으면 옆으로 빠져 정상 완료 -->
+        <div class="guard">
+          <div class="gate"><span class="q">◇ tool_call 있음?</span></div>
+          <div class="exit left">
+            <span class="edge-lbl no">없음 — assistant text</span>
+            <div class="node cat-core">
+              <div class="node-title">assistant 메시지 append</div>
+              <div class="mod">turn_messages 에 추가 후 break</div>
+            </div>
             <div class="arrow short"></div>
-            <div class="node cat-core wide">
-              <div class="node-cat">스트리밍</div>
-              <div class="node-title">provider.astream(messages, tool_specs) → 이벤트 yield</div>
-              <div class="mod">delta·reasoning·tool_call·DoneEvent 를 순서대로 emit</div>
-            </div>
-            <div class="arrow"></div>
-
-            <div class="gate"><span class="q">◇ tool_call 있음?</span></div>
-            <div class="split">
-              <div class="col">
-                <span class="edge-lbl no">없음 — assistant text</span>
-                <div class="arrow short"></div>
-                <div class="node cat-core">
-                  <div class="node-title">assistant 메시지 append</div>
-                  <div class="mod">turn_messages 에 추가 후 break</div>
-                </div>
-                <div class="arrow short"></div>
-                <div class="term">■ exit — 정상 완료</div>
-              </div>
-              <div class="col">
-                <span class="edge-lbl yes">있음</span>
-                <div class="arrow short"></div>
-                <div class="node cat-core wide">
-                  <div class="node-cat">tool_call 처리</div>
-                  <div class="node-title">_handle_tool_call(ctx, call, outcome) — 상세 → 05</div>
-                  <div class="mod">harness/call_handlers.py · outcome.interrupted / outcome.stop / CONTINUE</div>
-                </div>
-                <div class="arrow"></div>
-
-                <div class="gate"><span class="q">◇ outcome 결과?</span></div>
-                <div class="split">
-                  <div class="col">
-                    <span class="edge-lbl">interrupted</span>
-                    <div class="arrow short"></div>
-                    <div class="node cat-safe">
-                      <div class="node-title">_balance_unresolved_tool_calls (F1b)</div>
-                      <div class="mod">AskUser 등으로 턴이 끊기면 미해결 tool_call 에 placeholder 쌍 완성</div>
-                    </div>
-                    <div class="arrow short"></div>
-                    <div class="term">■ exit — 사용자 입력 대기</div>
-                  </div>
-                  <div class="col">
-                    <span class="edge-lbl">stop</span>
-                    <div class="arrow short"></div>
-                    <div class="node cat-core">
-                      <div class="node-title">complete_subagent → 즉시 종료</div>
-                    </div>
-                    <div class="arrow short"></div>
-                    <div class="term">■ exit — 서브에이전트 완료</div>
-                  </div>
-                  <div class="col">
-                    <span class="edge-lbl">CONTINUE</span>
-                    <div class="arrow short"></div>
-                    <div class="node cat-core">
-                      <div class="node-title">↻ 다음 iteration 으로</div>
-                      <div class="desc">back-edge — 루프 상단으로 돌아가 wind-down·budget 재검사.</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
+            <div class="term">■ exit — 정상 완료</div>
           </div>
+        </div>
+        <div class="arrow lbl" data-label="있음"></div>
+
+        <div class="node cat-core wide">
+          <div class="node-cat">tool_call 처리</div>
+          <div class="node-title">_handle_tool_call(ctx, call, outcome) — 상세 → 05</div>
+          <div class="mod">harness/call_handlers.py · outcome.interrupted / outcome.stop / CONTINUE</div>
+        </div>
+        <div class="arrow"></div>
+
+        <!-- outcome: interrupted/stop 은 양옆으로 빠져 종료, CONTINUE 는 spine(↻ back-edge) -->
+        <div class="guard">
+          <div class="exit left">
+            <span class="edge-lbl">interrupted</span>
+            <div class="node cat-safe">
+              <div class="node-title">_balance_unresolved_tool_calls (F1b)</div>
+              <div class="mod">AskUser 등으로 턴이 끊기면 미해결 tool_call 에 placeholder 쌍 완성</div>
+            </div>
+            <div class="arrow short"></div>
+            <div class="term">■ exit — 사용자 입력 대기</div>
+          </div>
+          <div class="gate"><span class="q">◇ outcome 결과?</span></div>
+          <div class="exit right">
+            <span class="edge-lbl">stop</span>
+            <div class="node cat-core"><div class="node-title">complete_subagent → 즉시 종료</div></div>
+            <div class="arrow short"></div>
+            <div class="term">■ exit — 서브에이전트 완료</div>
+          </div>
+        </div>
+        <div class="arrow lbl" data-label="CONTINUE — ↻ 다음 iteration"></div>
+
+        <div class="node cat-core">
+          <div class="node-title">↻ 루프 상단으로 (back-edge)</div>
+          <div class="desc">wind-down·budget 재검사.</div>
         </div>
       </div>
     </div>

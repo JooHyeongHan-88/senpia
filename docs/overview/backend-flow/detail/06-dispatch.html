@@ -32,71 +32,66 @@
     <div class="term">● call_sub_agent(agent_name, task) 진입</div>
     <div class="arrow"></div>
 
-    <div class="gate"><span class="q">◇ depth &gt; MAX_AGENT_DEPTH? (L2)</span><small>중첩 위임 깊이 가드</small></div>
-    <div class="split">
-      <div class="col">
+    <!-- L2 깊이 가드: 초과면 옆으로 빠져 종료 -->
+    <div class="guard">
+      <div class="gate"><span class="q">◇ depth &gt; MAX_AGENT_DEPTH? (L2)</span><small>중첩 위임 깊이 가드</small></div>
+      <div class="exit right">
         <span class="edge-lbl yes">예 — 초과</span>
-        <div class="arrow short"></div>
         <div class="node cat-safe"><div class="node-title">중첩 거부 요약 반환</div><div class="mod">AgentReturnEvent(summary="depth 초과")</div></div>
         <div class="arrow short"></div>
         <div class="term">■ exit</div>
       </div>
-      <div class="col">
-        <span class="edge-lbl no">아니오</span>
+    </div>
+    <div class="arrow lbl" data-label="아니오"></div>
+
+    <!-- 연속 위임 루프 가드 -->
+    <div class="guard">
+      <div class="gate"><span class="q">◇ budget.check_dispatch(name) — 연속 3회?</span><small>같은 에이전트 3회 연속 위임 = 루프</small></div>
+      <div class="exit right">
+        <span class="edge-lbl yes">예 — 연속 초과</span>
+        <div class="node cat-safe"><div class="node-title">연속 위임 차단 요약</div></div>
         <div class="arrow short"></div>
-        <div class="gate"><span class="q">◇ budget.check_dispatch(name) — 연속 3회?</span><small>같은 에이전트 3회 연속 위임 = 루프</small></div>
-        <div class="split">
-          <div class="col">
-            <span class="edge-lbl yes">예 — 연속 초과</span>
-            <div class="arrow short"></div>
-            <div class="node cat-safe"><div class="node-title">연속 위임 차단 요약</div></div>
-            <div class="arrow short"></div>
-            <div class="term">■ exit</div>
-          </div>
-          <div class="col">
-            <span class="edge-lbl no">아니오</span>
-            <div class="arrow short"></div>
-            <div class="gate"><span class="q">◇ agent_registry.get_by_name(name) 존재?</span></div>
-            <div class="split">
-              <div class="col">
-                <span class="edge-lbl no">없음</span>
-                <div class="arrow short"></div>
-                <div class="node cat-safe"><div class="node-title">unknown agent 요약</div></div>
-                <div class="arrow short"></div>
-                <div class="term">■ exit</div>
-              </div>
-              <div class="col">
-                <span class="edge-lbl yes">있음</span>
-                <div class="arrow short"></div>
-                <div class="node cat-core wide">
-                  <div class="node-cat">위임 시작</div>
-                  <div class="node-title">AgentSwitchEvent(agent_id, reason, dispatch_id) yield</div>
-                  <div class="mod">dispatch_id = call.id — 이벤트 라우팅 상관키</div>
-                </div>
-                <div class="arrow short"></div>
-                <div class="node cat-core wide">
-                  <div class="node-cat">격리 프롬프트</div>
-                  <div class="node-title">_compose_sub_agent_system_prompt(agent, skills)</div>
-                  <div class="desc">base + safety + 에이전트 본문 + 학습 SKILL + 종료 규약(complete_subagent 호출 명시).</div>
-                </div>
-                <div class="arrow short"></div>
-                <div class="node cat-core wide">
-                  <div class="node-cat">격리 실행 (L0)</div>
-                  <div class="node-title">_run_agent_turn(agent_registry=None, turn_messages=None, state=sub_state)</div>
-                  <div class="mod">별도 AgentState · 별도 messages — 메인 컨텍스트 오염 없음</div>
-                  <div class="desc">raw 이벤트를 _progress() 로 AgentProgressEvent(dispatch_id) 래핑 후 오케스트레이터로 전달. complete_subagent 결과를 summary 로 캡처.</div>
-                </div>
-                <div class="arrow short"></div>
-                <div class="node cat-core wide">
-                  <div class="node-cat">복귀</div>
-                  <div class="node-title">AgentReturnEvent(summary, dispatch_id) yield</div>
-                  <div class="desc">summary 우선순위: complete_subagent → _extract_task_summary("Task Summary:" 헤더) → 마지막 200자 폴백. 부모 _run_agent_turn 이 summary 를 tool_result 로 변환.</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <div class="term">■ exit</div>
       </div>
+    </div>
+    <div class="arrow lbl" data-label="아니오"></div>
+
+    <!-- 에이전트 존재 확인 -->
+    <div class="guard">
+      <div class="gate"><span class="q">◇ agent_registry.get_by_name(name) 존재?</span></div>
+      <div class="exit left">
+        <span class="edge-lbl no">없음</span>
+        <div class="node cat-safe"><div class="node-title">unknown agent 요약</div></div>
+        <div class="arrow short"></div>
+        <div class="term">■ exit</div>
+      </div>
+    </div>
+    <div class="arrow lbl" data-label="있음 — 위임 실행"></div>
+
+    <!-- 위임 실행 spine (4 단계) -->
+    <div class="node cat-core wide">
+      <div class="node-cat">위임 시작</div>
+      <div class="node-title">AgentSwitchEvent(agent_id, reason, dispatch_id) yield</div>
+      <div class="mod">dispatch_id = call.id — 이벤트 라우팅 상관키</div>
+    </div>
+    <div class="arrow"></div>
+    <div class="node cat-core wide">
+      <div class="node-cat">격리 프롬프트</div>
+      <div class="node-title">_compose_sub_agent_system_prompt(agent, skills)</div>
+      <div class="desc">base + safety + 에이전트 본문 + 학습 SKILL + 종료 규약(complete_subagent 호출 명시).</div>
+    </div>
+    <div class="arrow"></div>
+    <div class="node cat-core wide">
+      <div class="node-cat">격리 실행 (L0)</div>
+      <div class="node-title">_run_agent_turn(agent_registry=None, turn_messages=None, state=sub_state)</div>
+      <div class="mod">별도 AgentState · 별도 messages — 메인 컨텍스트 오염 없음</div>
+      <div class="desc">raw 이벤트를 _progress() 로 AgentProgressEvent(dispatch_id) 래핑 후 오케스트레이터로 전달. complete_subagent 결과를 summary 로 캡처.</div>
+    </div>
+    <div class="arrow"></div>
+    <div class="node cat-core wide">
+      <div class="node-cat">복귀</div>
+      <div class="node-title">AgentReturnEvent(summary, dispatch_id) yield</div>
+      <div class="desc">summary 우선순위: complete_subagent → _extract_task_summary("Task Summary:" 헤더) → 마지막 200자 폴백. 부모 _run_agent_turn 이 summary 를 tool_result 로 변환.</div>
     </div>
   </div>
 

@@ -36,36 +36,35 @@
     </div>
     <div class="arrow"></div>
 
-    <div class="gate"><span class="q">◇ frozen(EXE) 환경?</span><small>dev 는 Vite 프록시라 origin 이 달라 → 가드 비활성</small></div>
+    <!-- frozen 게이트: dev 는 옆으로 빠져 자동 통과, spine 은 frozen 검증 -->
+    <div class="guard">
+      <div class="gate"><span class="q">◇ frozen(EXE) 환경?</span><small>dev 는 Vite 프록시라 origin 이 달라 → 가드 비활성</small></div>
+      <div class="exit right">
+        <span class="edge-lbl no">아니오 (dev)</span>
+        <div class="node cat-api"><div class="node-title">자동 통과</div><div class="mod">가드 비활성</div></div>
+      </div>
+    </div>
+    <div class="arrow lbl" data-label="예 (frozen)"></div>
+
+    <!-- frozen 검증: Origin 헤더 유무로 갈라지는 대칭 분기 (둘 다 통과/403 로 귀결) -->
+    <div class="gate"><span class="q">◇ Origin 헤더 있음?</span></div>
     <div class="split">
       <div class="col">
-        <span class="edge-lbl no">dev</span>
+        <span class="edge-lbl yes">있음</span>
         <div class="arrow short"></div>
-        <div class="node cat-api"><div class="node-title">자동 통과</div></div>
+        <div class="gate"><span class="q">◇ ALLOWED_ORIGIN 일치?</span><small>config.ALLOWED_ORIGIN — 런타임 포트 매 요청 참조</small></div>
+        <div class="split">
+          <div class="col"><span class="edge-lbl yes">일치</span><div class="arrow short"></div><div class="node cat-api"><div class="node-title">통과</div></div></div>
+          <div class="col"><span class="edge-lbl no">불일치</span><div class="arrow short"></div><div class="node cat-safe"><div class="node-title">403 Forbidden</div></div></div>
+        </div>
       </div>
       <div class="col">
-        <span class="edge-lbl yes">frozen</span>
+        <span class="edge-lbl no">없음</span>
         <div class="arrow short"></div>
-        <div class="gate"><span class="q">◇ Origin 헤더 있음?</span></div>
+        <div class="gate"><span class="q">◇ sec-fetch-site: same-origin/none?</span></div>
         <div class="split">
-          <div class="col">
-            <span class="edge-lbl yes">있음</span>
-            <div class="arrow short"></div>
-            <div class="gate"><span class="q">◇ ALLOWED_ORIGIN 일치?</span><small>config.ALLOWED_ORIGIN — 런타임 포트 매 요청 참조</small></div>
-            <div class="split">
-              <div class="col"><span class="edge-lbl yes">일치</span><div class="arrow short"></div><div class="node cat-api"><div class="node-title">통과</div></div></div>
-              <div class="col"><span class="edge-lbl no">불일치</span><div class="arrow short"></div><div class="node cat-safe"><div class="node-title">403 Forbidden</div></div></div>
-            </div>
-          </div>
-          <div class="col">
-            <span class="edge-lbl no">없음</span>
-            <div class="arrow short"></div>
-            <div class="gate"><span class="q">◇ sec-fetch-site: same-origin/none?</span></div>
-            <div class="split">
-              <div class="col"><span class="edge-lbl yes">예</span><div class="arrow short"></div><div class="node cat-api"><div class="node-title">통과</div></div></div>
-              <div class="col"><span class="edge-lbl no">아니오</span><div class="arrow short"></div><div class="node cat-safe"><div class="node-title">403 Forbidden</div></div></div>
-            </div>
-          </div>
+          <div class="col"><span class="edge-lbl yes">예</span><div class="arrow short"></div><div class="node cat-api"><div class="node-title">통과</div></div></div>
+          <div class="col"><span class="edge-lbl no">아니오</span><div class="arrow short"></div><div class="node cat-safe"><div class="node-title">403 Forbidden</div></div></div>
         </div>
       </div>
     </div>

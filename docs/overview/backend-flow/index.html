@@ -65,27 +65,40 @@
     </a>
     <div class="arrow"></div>
 
-    <div class="gate"><span class="q">◇ 이미 같은 앱 실행 중?</span><small>ServerAlreadyRunning 예외</small></div>
-
-    <div class="split">
-      <div class="col">
+    <!-- 단일 인스턴스 게이트: '예'는 옆으로 빠져 종료, 'spine'은 계속 -->
+    <div class="guard">
+      <div class="gate"><span class="q">◇ 이미 같은 앱 실행 중?</span><small>ServerAlreadyRunning 예외</small></div>
+      <div class="exit right">
         <span class="edge-lbl no">예 — 점유됨</span>
-        <div class="arrow short"></div>
         <div class="node cat-safe">
           <div class="node-cat">단일 인스턴스</div>
           <div class="node-title">기존 탭 열고 sys.exit(0)</div>
           <div class="mod">_probe_same_app → 기존 인스턴스 재사용</div>
         </div>
-      </div>
-      <div class="col">
-        <span class="edge-lbl yes">아니오 — 계속</span>
         <div class="arrow short"></div>
-        <div class="gate"><span class="q">◇ 후보 포트도 점유?</span><small>+1..+4 체인</small></div>
-        <div class="arrow short lbl" data-label="전수 실패 시"></div>
+        <div class="term">■ 종료</div>
+      </div>
+    </div>
+    <div class="arrow lbl" data-label="아니오 — 계속"></div>
+
+    <!-- 후보 포트 게이트: 둘 다 바인딩으로 합류하는 대칭 분기 → split 유지 -->
+    <div class="gate"><span class="q">◇ 후보 포트 +1..+4 도 점유?</span></div>
+    <div class="split">
+      <div class="col">
+        <span class="edge-lbl no">전수 실패</span>
+        <div class="arrow short"></div>
         <div class="node cat-life">
           <div class="node-cat">폴백</div>
           <div class="node-title">동적 포트 최후수단</div>
-          <div class="mod">core/server_socket — 후보 체인 → OS 동적 할당</div>
+          <div class="mod">core/server_socket — bind(127.0.0.1, 0)</div>
+        </div>
+      </div>
+      <div class="col">
+        <span class="edge-lbl yes">후보 성공</span>
+        <div class="arrow short"></div>
+        <div class="node cat-life">
+          <div class="node-title">후보 포트 바인딩 성공</div>
+          <div class="mod">set_runtime_port() 갱신</div>
         </div>
       </div>
     </div>
@@ -163,42 +176,42 @@
     </a>
     <div class="arrow"></div>
 
-    <div class="gate"><span class="q">◇ Origin 가드 통과?</span><small>frozen EXE 만 검사 (dev 는 Vite 프록시로 자동 통과)</small></div>
-    <div class="split">
-      <div class="col">
+    <!-- Origin 가드: '차단'은 옆으로 빠져 403 ■, spine 은 통과 -->
+    <div class="guard">
+      <div class="gate"><span class="q">◇ Origin 가드 통과?</span><small>frozen EXE 만 검사 (dev 는 Vite 프록시로 자동 통과)</small></div>
+      <div class="exit right">
         <span class="edge-lbl no">차단</span>
-        <div class="arrow short"></div>
         <div class="node cat-safe"><div class="node-title">403 거부</div><div class="mod">deps.require_local_origin</div></div>
-      </div>
-      <div class="col">
-        <span class="edge-lbl yes">통과</span>
         <div class="arrow short"></div>
-        <a class="node linked cat-api" href="detail/03-chat-turn.html">
-          <div class="node-title">event_source() 진입</div>
-          <div class="mod">api/chat.py</div>
-          <span class="more">→</span>
-        </a>
+        <div class="term">■</div>
       </div>
     </div>
+    <div class="arrow lbl" data-label="통과"></div>
+
+    <a class="node linked cat-api" href="detail/03-chat-turn.html">
+      <div class="node-title">event_source() 진입</div>
+      <div class="mod">api/chat.py</div>
+      <span class="more">→</span>
+    </a>
     <div class="arrow"></div>
 
-    <div class="gate"><span class="q">◇ 같은 client_id 턴 진행 중? (R2)</span></div>
-    <div class="split">
-      <div class="col">
+    <!-- 동시 턴 가드(R2): '예 중복'은 옆으로 빠져 즉시 거부 ■, spine(아니오 — 단독)이 다음 섹션으로 곧장 -->
+    <div class="guard">
+      <div class="gate"><span class="q">◇ 같은 client_id 턴 진행 중? (R2)</span></div>
+      <div class="exit right">
         <span class="edge-lbl no">예 — 중복</span>
-        <div class="arrow short"></div>
         <div class="node cat-safe"><div class="node-title">즉시 거부</div><div class="mod">ErrorEvent + DoneEvent (run_turn 미진입)</div></div>
-      </div>
-      <div class="col">
-        <span class="edge-lbl yes">아니오 — 단독</span>
         <div class="arrow short"></div>
-        <a class="node linked cat-api" href="detail/03-chat-turn.html">
-          <div class="node-title">get_provider() → harness.run_turn()</div>
-          <div class="mod">_active_turn_clients.add(id) · 설정으로 provider 즉석 생성</div>
-          <span class="more">→</span>
-        </a>
+        <div class="term">■</div>
       </div>
     </div>
+    <div class="arrow lbl" data-label="아니오 — 단독"></div>
+
+    <a class="node linked cat-api" href="detail/03-chat-turn.html">
+      <div class="node-title">get_provider() → harness.run_turn()</div>
+      <div class="mod">_active_turn_clients.add(id) · 설정으로 provider 즉석 생성</div>
+      <span class="more">→</span>
+    </a>
   </div>
 
   <!-- ===================== C. run_turn 오케스트레이션 ===================== -->

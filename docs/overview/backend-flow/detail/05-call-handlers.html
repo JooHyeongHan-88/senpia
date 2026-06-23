@@ -23,7 +23,8 @@
     <p class="subtitle">
       <code class="i">_run_agent_turn</code> 이 emit한 tool_call 하나마다
       <code class="i">_handle_tool_call(ctx, call, outcome)</code> 가 처리한다.
-      깨진 인자 게이트 → sentinel 게이트 → 일반도구 파이프라인의 결정트리로 표현한다.
+      깨진 인자 → sentinel → 일반도구 파이프라인을 <b>세로 spine</b> 으로 읽고,
+      각 게이트의 조기 종료/예외는 <b>옆으로 빠져 ■</b> 로 끝난다.
     </p>
   </header>
 
@@ -40,17 +41,19 @@
     </div>
   </div>
 
-  <div class="sec"><span class="sec-no">2</span><h2>3단계 결정트리</h2></div>
+  <div class="sec"><span class="sec-no">2</span><h2>3단계 결정트리 — spine + 측면 exit</h2></div>
+  <p class="lead">메인 경로(일반도구 파이프라인)는 가운데 spine 으로 곧장 내려가고, 각 게이트에서 빠지는
+    조기 종료/예외(self-correct·AskUser·sentinel·루프가드)는 좌/우로 화살표로 빠져 <code class="i">■</code> 로 끝난다.</p>
 
   <div class="flow">
     <div class="term">● _handle_tool_call(ctx, call, outcome) 진입</div>
     <div class="arrow"></div>
 
-    <div class="gate"><span class="q">◇ call.arguments 에 MALFORMED_TOOL_ARGS_KEY 있음? (F3)</span><small>스트리밍 잘림으로 인자 JSON 불완전</small></div>
-    <div class="split">
-      <div class="col">
+    <!-- 1단계: 깨진 인자 게이트 (F3) -->
+    <div class="guard">
+      <div class="gate"><span class="q">◇ call.arguments 에 MALFORMED_TOOL_ARGS_KEY? (F3)</span><small>스트리밍 잘림으로 인자 JSON 불완전</small></div>
+      <div class="exit right">
         <span class="edge-lbl yes">예 — 깨진 인자</span>
-        <div class="arrow short"></div>
         <div class="node cat-safe">
           <div class="node-cat">1단계 — 특수 처리</div>
           <div class="node-title">_handle_malformed_args()</div>
@@ -58,98 +61,101 @@
           <div class="desc">"더 짧고 정확한 JSON 으로 재호출" ToolResultEvent(is_error=True) → LLM self-correct. 사용자 미개입.</div>
         </div>
         <div class="arrow short"></div>
-        <div class="term">■ CONTINUE (outcome 그대로)</div>
-      </div>
-      <div class="col">
-        <span class="edge-lbl no">아니오</span>
-        <div class="arrow short"></div>
-
-        <div class="gate"><span class="q">◇ _select_sentinel_handler(ctx, call) → 핸들러 있음?</span><small>_SENTINEL_ROUTES 순서대로 (이름∧조건) 스캔</small></div>
-        <div class="split">
-          <div class="col">
-            <span class="edge-lbl yes">예 — sentinel</span>
-            <div class="arrow short"></div>
-            <div class="node cat-core">
-              <div class="node-cat">1단계 — sentinel</div>
-              <div class="node-title">해당 sentinel 핸들러 실행</div>
-              <div class="mod">상세 → <a href="05b-sentinel.html">05b sentinel 페이지</a></div>
-              <div class="desc">add_todo·complete_todo·ask_user·activate_skill·call_sub_agent(s)·complete_subagent. outcome 에 interrupted/stop 기록.</div>
-            </div>
-          </div>
-          <div class="col">
-            <span class="edge-lbl no">아니오 — 일반도구</span>
-            <div class="arrow short"></div>
-            <div class="node cat-core wide">
-              <div class="node-cat">2단계 — 슬롯 가드</div>
-              <div class="node-title">_guard_tool_args(ctx, call) → block_event | None</div>
-              <div class="mod">agent/guard.py · validate_tool_args</div>
-            </div>
-            <div class="arrow short"></div>
-
-            <div class="gate"><span class="q">◇ block_event?</span><small>missing(누락) vs invalid(형식 오류) 분기</small></div>
-            <div class="split">
-              <div class="col">
-                <span class="edge-lbl yes">missing — 슬롯 누락</span>
-                <div class="arrow short"></div>
-                <div class="node cat-safe">
-                  <div class="node-title">AskUserEvent + interrupted=True</div>
-                  <div class="desc">slot_prompts 에서 사용자용 질문 문구. 슬롯 영속 → 다음 턴 재시도.</div>
-                </div>
-              </div>
-              <div class="col">
-                <span class="edge-lbl">invalid — 형식 오류</span>
-                <div class="arrow short"></div>
-                <div class="node cat-safe">
-                  <div class="node-title">ToolResultEvent(is_error=True)</div>
-                  <div class="desc">invalid_message → LLM self-correct. 사용자 미개입. 동시에 missing 도 있으면 이 경로가 포함 안내.</div>
-                </div>
-              </div>
-              <div class="col">
-                <span class="edge-lbl no">통과</span>
-                <div class="arrow short"></div>
-                <div class="node cat-core wide">
-                  <div class="node-cat">3단계 — 루프가드</div>
-                  <div class="node-title">_loop_guard_denial(ctx, call) → block | None (R4)</div>
-                  <div class="mod">history_calls · _call_signature(이름+인자+파일fingerprint)</div>
-                </div>
-                <div class="arrow short"></div>
-
-                <div class="gate"><span class="q">◇ 같은 시그니처 history_calls 에 있음?</span><small>파일 mtime/size fingerprint 포함 — 진짜 반복만 차단</small></div>
-                <div class="split">
-                  <div class="col">
-                    <span class="edge-lbl yes">반복 — 차단</span>
-                    <div class="arrow short"></div>
-                    <div class="node cat-safe">
-                      <div class="node-title">루프가드 ToolResultEvent(is_error=True)</div>
-                      <div class="desc">_LOOP_GUARD_MESSAGE — "같은 호출 반복" 안내.</div>
-                    </div>
-                  </div>
-                  <div class="col">
-                    <span class="edge-lbl no">처음</span>
-                    <div class="arrow short"></div>
-                    <div class="node cat-core">
-                      <div class="node-title">history_calls 에 시그니처 기록</div>
-                    </div>
-                    <div class="arrow short"></div>
-                    <div class="node cat-core wide">
-                      <div class="node-cat">실행</div>
-                      <div class="node-title">_execute_tool(name, args) → ToolResult</div>
-                      <div class="mod">asyncio.wait_for(timeout_seconds) · ToolResult(content, data, is_error)</div>
-                      <div class="desc">타임아웃 초과 시 ToolResult(is_error=True, "[timeout] ...") 자동 반환. sentinel 도구가 여기까지 오면 L3 에러.</div>
-                    </div>
-                    <div class="arrow short"></div>
-                    <div class="node cat-core">
-                      <div class="node-title">_emit_post_tool_todo_events(ctx)</div>
-                      <div class="desc">실행 중이던 todo 종료 + 전원 terminal 이면 SkillCompleteEvent.</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <div class="term">■ CONTINUE</div>
       </div>
     </div>
+    <div class="arrow lbl" data-label="아니오"></div>
+
+    <!-- 2단계 게이트: sentinel -->
+    <div class="guard">
+      <div class="gate"><span class="q">◇ _select_sentinel_handler → 핸들러 있음?</span><small>_SENTINEL_ROUTES 순서대로 (이름∧조건) 스캔</small></div>
+      <div class="exit right">
+        <span class="edge-lbl yes">예 — sentinel</span>
+        <div class="node cat-core">
+          <div class="node-cat">1단계 — sentinel</div>
+          <div class="node-title">해당 sentinel 핸들러 실행</div>
+          <div class="mod">상세 → <a href="05b-sentinel.html">05b sentinel 페이지</a></div>
+          <div class="desc">add_todo·complete_todo·ask_user·activate_skill·call_sub_agent(s)·complete_subagent. outcome 에 interrupted/stop 기록.</div>
+        </div>
+        <div class="arrow short"></div>
+        <div class="term">■ outcome 반환</div>
+      </div>
+    </div>
+    <div class="arrow lbl" data-label="아니오 — 일반도구"></div>
+
+    <!-- 일반도구 파이프라인 (spine): 2단계 슬롯 가드 -->
+    <div class="node cat-core wide">
+      <div class="node-cat">2단계 — 슬롯 가드</div>
+      <div class="node-title">_guard_tool_args(ctx, call) → block_event | None</div>
+      <div class="mod">agent/guard.py · validate_tool_args</div>
+    </div>
+    <div class="arrow"></div>
+
+    <!-- block_event 분기: 좌(invalid) + 우(missing) 양측 exit, 통과는 spine -->
+    <div class="guard">
+      <div class="exit left">
+        <span class="edge-lbl">invalid — 형식 오류</span>
+        <div class="node cat-safe">
+          <div class="node-title">ToolResultEvent(is_error=True)</div>
+          <div class="desc">invalid_message → LLM self-correct. 사용자 미개입. missing 도 동시면 함께 안내.</div>
+        </div>
+        <div class="arrow short"></div>
+        <div class="term">■</div>
+      </div>
+      <div class="gate"><span class="q">◇ block_event?</span><small>missing(누락) vs invalid(형식 오류)</small></div>
+      <div class="exit right">
+        <span class="edge-lbl">missing — 슬롯 누락</span>
+        <div class="node cat-safe">
+          <div class="node-title">AskUserEvent + interrupted=True</div>
+          <div class="desc">slot_prompts 에서 사용자용 질문 문구. 슬롯 영속 → 다음 턴 재시도.</div>
+        </div>
+        <div class="arrow short"></div>
+        <div class="term">■</div>
+      </div>
+    </div>
+    <div class="arrow lbl" data-label="통과"></div>
+
+    <!-- 3단계 루프가드 (spine) -->
+    <div class="node cat-core wide">
+      <div class="node-cat">3단계 — 루프가드</div>
+      <div class="node-title">_loop_guard_denial(ctx, call) → block | None (R4)</div>
+      <div class="mod">history_calls · _call_signature(이름+인자+파일 fingerprint)</div>
+    </div>
+    <div class="arrow"></div>
+
+    <div class="guard">
+      <div class="gate"><span class="q">◇ 같은 시그니처 history_calls 에 있음?</span><small>파일 mtime/size fingerprint 포함 — 진짜 반복만 차단</small></div>
+      <div class="exit right">
+        <span class="edge-lbl">반복 — 차단</span>
+        <div class="node cat-safe">
+          <div class="node-title">루프가드 ToolResultEvent(is_error=True)</div>
+          <div class="desc">_LOOP_GUARD_MESSAGE — "같은 호출 반복" 안내.</div>
+        </div>
+        <div class="arrow short"></div>
+        <div class="term">■</div>
+      </div>
+    </div>
+    <div class="arrow lbl" data-label="처음"></div>
+
+    <!-- 실행 (spine) -->
+    <div class="node cat-core">
+      <div class="node-title">history_calls 에 시그니처 기록</div>
+    </div>
+    <div class="arrow"></div>
+
+    <div class="node cat-core wide">
+      <div class="node-cat">실행</div>
+      <div class="node-title">_execute_tool(name, args) → ToolResult</div>
+      <div class="mod">asyncio.wait_for(timeout_seconds) · ToolResult(content, data, is_error)</div>
+      <div class="desc">타임아웃 초과 시 ToolResult(is_error=True, "[timeout] ...") 자동 반환. sentinel 도구가 여기까지 오면 L3 에러.</div>
+    </div>
+    <div class="arrow"></div>
+
+    <div class="node cat-core">
+      <div class="node-title">_emit_post_tool_todo_events(ctx)</div>
+      <div class="desc">실행 중이던 todo 종료 + 전원 terminal 이면 SkillCompleteEvent.</div>
+    </div>
+    <div class="arrow"></div>
 
     <div class="merge">▽ 모든 경로 합류 → CallOutcome 반환</div>
   </div>

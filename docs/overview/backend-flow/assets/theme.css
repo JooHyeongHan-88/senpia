@@ -43,7 +43,9 @@
   --r-md: 12px;
   --r-lg: 16px;
 
-  --maxw: 1120px;
+  --maxw: 1280px;        /* 페이지 폭 — 흐름도가 전체 폭을 쓰도록 확장 */
+  --flow-maxw: 1280px;   /* 흐름도 컨테이너 폭 (다지 분기 한 줄 보장) */
+  --rail: 760px;         /* BPMN 가로 레일을 그리는 컨테이너 최소폭(미만이면 세로 스택) */
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -148,7 +150,7 @@ body {
 }
 .sec .sec-note { color: var(--faint); font-size: 13px; margin-left: auto; }
 
-p.lead { color: var(--mut); margin: 8px 0 14px; }
+p.lead { color: var(--mut); margin: 8px 0 14px; max-width: 920px; }
 
 /* ---------- 칩 ---------- */
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
@@ -192,6 +194,9 @@ p.lead { color: var(--mut); margin: 8px 0 14px; }
   align-items: center;
   gap: 0;
   margin: 18px 0;
+  /* 자식 분기(.split·.lanes·.guard)가 '뷰포트'가 아니라 '이 흐름 영역'의 폭에 반응하도록.
+     중첩 흐름(루프 안 등)은 자기 .flow 가 컨테이너가 돼 좁으면 자동으로 세로 스택. */
+  container-type: inline-size;
 }
 .node {
   display: block;
@@ -344,19 +349,23 @@ a.node.linked:hover .more { opacity: 1; }
   display: flex;
   gap: 18px;
   width: 100%;
-  max-width: 980px;
+  max-width: var(--flow-maxw);   /* 다지 분기가 한 줄에 들어가도록 확장 */
   margin: 0 auto;
   justify-content: center;
   align-items: flex-start;
   flex-wrap: wrap;
+  position: relative;
+  padding-top: 20px;          /* 상단 분기 연결선(레일+드롭) 영역 */
 }
 .split > .col {
   display: flex;
   flex-direction: column;
   align-items: center;
-  flex: 1 1 230px;
-  max-width: 320px;
+  flex: 1 1 200px;
+  max-width: 300px;
+  position: relative;
 }
+.split > .col > * { position: relative; z-index: 1; }   /* 노드·라벨이 연결선 위로 */
 .split > .col .node { max-width: 100%; }
 .edge-lbl {
   display: inline-block;
@@ -376,7 +385,7 @@ a.node.linked:hover .more { opacity: 1; }
 /* 병렬 fork/join 바 + 레인 */
 .fork-bar, .join-bar {
   width: 100%;
-  max-width: 760px;
+  max-width: 1100px;
   margin: 4px auto;
   background: var(--dark);
   color: var(--code-tx);
@@ -391,7 +400,7 @@ a.node.linked:hover .more { opacity: 1; }
   display: flex;
   gap: 16px;
   width: 100%;
-  max-width: 920px;
+  max-width: 1100px;
   margin: 0 auto;
   justify-content: center;
   align-items: stretch;
@@ -426,9 +435,230 @@ a.node.linked:hover .more { opacity: 1; }
   font-size: 12px;
   font-weight: 700;
   color: var(--mut);
+  position: relative;
+}
+/* 합류 진입 화살촉 — 가지들이 머지로 내려옴 */
+.merge::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -9px;
+  transform: translateX(-50%);
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 7px solid var(--faint);
 }
 
-/* 루프 back-edge — 좌측 점선 브래킷 + 상단 화살촉 */
+/* ============================================================================
+   guard — 세로 spine + 측면 exit (중첩 staircase 평탄화 관용구)
+   결정 게이트는 가운데 spine 에 고정, 조기 종료/예외 가지는 좌/우로 가로 화살표로
+   빠져 .term(■) 로 끝난다. 메인 경로(=계속)는 spine 따라 다음 .arrow 로 곧장 내려간다.
+   한 게이트에 .exit.left + .exit.right 를 동시에 달면 2 exit + 1 continue(통과) 표현.
+   ============================================================================ */
+.guard {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;   /* 빈 반대편 칼럼이 균형 → 게이트 항상 중앙 */
+  align-items: start;
+  justify-items: center;
+  width: 100%;
+  max-width: var(--flow-maxw);
+  margin: 0 auto;
+  position: relative;
+}
+/* 가운데 세로 spine — 게이트(상단)가 윗부분을 덮고, 아래로 다음 .arrow 까지 이어진다. */
+.guard::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--faint);
+  transform: translateX(-50%);
+  z-index: 0;
+}
+.guard > * { position: relative; z-index: 1; }
+.guard > .gate { grid-column: 2; align-self: start; }
+.guard > .exit {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  max-width: 300px;
+  margin-top: 14px;
+  position: relative;
+}
+.guard > .exit.right { grid-column: 3; justify-self: start; padding-left: 32px; }
+.guard > .exit.left  { grid-column: 1; justify-self: end;   padding-right: 32px; }
+/* 게이트 변 → exit 가로 연결선 (edge-lbl 중앙 높이) */
+.guard > .exit::before {
+  content: "";
+  position: absolute;
+  top: 12px;
+  height: 2px;
+  background: var(--faint);
+  z-index: 0;
+}
+.guard > .exit.right::before { left: 0; width: 32px; }
+.guard > .exit.left::before  { right: 0; width: 32px; }
+/* exit 방향 화살촉 */
+.guard > .exit::after {
+  content: "";
+  position: absolute;
+  top: 7px;
+  width: 0; height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  z-index: 0;
+}
+.guard > .exit.right::after { left: 25px; border-left: 7px solid var(--faint); }
+.guard > .exit.left::after  { right: 25px; border-right: 7px solid var(--faint); }
+.guard > .exit .edge-lbl { margin-bottom: 4px; }
+.guard > .exit .node { max-width: 100%; }
+.guard > .exit .arrow { margin-top: 2px; }
+
+/* ============================================================================
+   BPMN 풍 연결선 — 데스크탑(≥821px) 전용.
+   모바일 세로 스택에서는 미적용 (min-width 조건부).
+   · 상단: 위 요소(게이트/화살표) → 가로 레일 → 각 가지(컬럼)로 드롭. (항상)
+   · 하단: 각 가지 → 바닥 레일 → 머지/다음 화살표. (뒤에 .merge/.arrow 가 있을 때만)
+   · 종료 가지(`.col` 직속 자식이 `.term` 인 가지)는 자기 `■` 에서 끝(합류 안 함).
+   pseudo 예산: .split(::before 상단스텁/::after 하단스텁), .col(::before 스파인/::after 레일).
+   ⚠️ '뷰포트'가 아니라 부모 .flow 의 폭(@container)에 반응한다 — 중첩/루프 안에서 좁아지면
+      가로 레일을 안 그리고 세로 스택으로 degrade(깨진 레일 방지). 컨테이너 선언은 .flow.
+   ============================================================================ */
+@container (min-width: 760px) {
+
+/* --- 분기(상단): 모든 split 공통 --- */
+/* 가로 레일: 각 컬럼이 자기 폭 + 양옆 gap 절반(18/2=9)을 그려 이웃과 잇는다.
+   첫/마지막 컬럼은 중심까지만 → 바깥 overshoot 없이 center-to-center. */
+.split > .col::after {
+  content: "";
+  position: absolute;
+  left: -9px;
+  right: -9px;
+  top: -10px;
+  bottom: -10px;
+  border-top: 2px solid var(--faint);
+  z-index: 0;
+}
+.split > .col:first-child::after { left: 50%; }
+.split > .col:last-child::after  { right: 50%; }
+/* 세로선: 기본은 레일 → 컬럼 top 짧은 드롭 */
+.split > .col::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -10px;
+  height: 10px;
+  width: 2px;
+  background: var(--faint);
+  transform: translateX(-50%);
+  z-index: 0;
+}
+/* 상단 진입 스텁: 위 요소 → 레일 중앙 */
+.split::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  height: 10px;
+  width: 2px;
+  background: var(--faint);
+  transform: translateX(-50%);
+  z-index: 0;
+}
+
+/* --- 합류(하단): 뒤에 .merge 또는 .arrow 가 따라오는 split 만 --- */
+.split:is(:has(+ .merge), :has(+ .arrow)) {
+  align-items: stretch;       /* 이어지는 가지들 높이 균일 → 바닥 y 정렬 */
+  padding-bottom: 20px;
+}
+.split:is(:has(+ .merge), :has(+ .arrow)) > .col::after {
+  border-bottom: 2px solid var(--faint);   /* 바닥 레일 */
+}
+.split:is(:has(+ .merge), :has(+ .arrow)) > .col::before {
+  height: auto;
+  bottom: -10px;              /* 스파인을 바닥 레일까지 (빈 가지도 합류 보임) */
+}
+.split:is(:has(+ .merge), :has(+ .arrow))::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  height: 10px;
+  width: 2px;
+  background: var(--faint);
+  transform: translateX(-50%);
+  z-index: 0;
+}
+
+/* 종료 가지: `■`(.term) 직속 자식 → 안 늘이고 자기 터미널에서 끝 (합류 미연결) */
+.split:is(:has(+ .merge), :has(+ .arrow)) > .col:has(> .term) { align-self: flex-start; }
+.split:is(:has(+ .merge), :has(+ .arrow)) > .col:has(> .term)::after { border-bottom: none; }
+.split:is(:has(+ .merge), :has(+ .arrow)) > .col:has(> .term)::before { height: auto; bottom: 0; }
+
+/* --- 병렬: fork-bar → lanes → join-bar/arrow --- */
+.lanes { position: relative; padding-top: 18px; }
+.lanes:is(:has(+ .join-bar), :has(+ .arrow)) { padding-bottom: 18px; }
+.lanes > .lane { position: relative; }
+/* 레일(레인 상/하단 가장자리에 flush, gap 16/2=8 bridge) */
+.lanes > .lane::after {
+  content: "";
+  position: absolute;
+  left: -8px;
+  right: -8px;
+  top: 0;
+  bottom: 0;
+  border-top: 2px solid var(--faint);
+  z-index: 0;
+  pointer-events: none;
+}
+.lanes > .lane:first-child::after { left: 0; }
+.lanes > .lane:last-child::after  { right: 0; }
+.lanes:is(:has(+ .join-bar), :has(+ .arrow)) > .lane::after {
+  border-bottom: 2px solid var(--faint);
+}
+.lanes::before {                 /* fork-bar → 상단 레일 */
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  height: 18px;
+  width: 2px;
+  background: var(--faint);
+  transform: translateX(-50%);
+  z-index: 0;
+}
+.lanes:is(:has(+ .join-bar), :has(+ .arrow))::after {  /* 바닥 레일 → join-bar/arrow */
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  height: 18px;
+  width: 2px;
+  background: var(--faint);
+  transform: translateX(-50%);
+  z-index: 0;
+}
+
+} /* end @container (min-width: 760px) — BPMN 레일 */
+
+/* 컨테이너가 좁으면(.flow < 760: 모바일·중첩·루프 안) 분기를 세로로 스택하고 레일을 그리지 않는다.
+   레일 규칙은 @container (min-width) 안에만 있으므로 여기선 레이아웃만 세로로 전환하면 된다. */
+@container (max-width: 759.98px) {
+  .split, .lanes { flex-direction: column; align-items: center; }
+  .split > .col, .lanes > .lane { max-width: 660px; width: 100%; }
+  .gate { max-width: 100%; }
+  .guard { grid-template-columns: 1fr; }     /* 게이트 + exit 세로 스택 */
+  .guard > .exit { grid-column: 1 !important; justify-self: center !important;
+    padding-left: 0 !important; padding-right: 0 !important; max-width: 660px; margin-top: 10px; }
+  .guard > .exit::before, .guard > .exit::after { display: none; }   /* 가로 연결선 숨김 */
+}
+
+/* 루프 back-edge — 좌측 점선 브래킷 + 상단 화살촉
+   화살촉은 세로선(브래킷 좌변, center≈15px) 꼭대기에 정확히 캡으로 얹는다.
+   좌상단 radius 를 줄여 직선이 화살촉 밑변까지 닿게 한다(촉이 떠 보이던 문제). */
 .loop.cycle { padding-left: 38px; }
 .loop.cycle::before {
   content: "";
@@ -439,13 +669,13 @@ a.node.linked:hover .more { opacity: 1; }
   width: 12px;
   border: 2px dashed var(--acc);
   border-right: none;
-  border-radius: 9px 0 0 9px;
+  border-radius: 3px 0 0 9px;
 }
 .loop.cycle::after {
   content: "";
   position: absolute;
-  left: 9px;
-  top: 13px;
+  left: 10px;          /* tip center = 10 + 5 = 15 → 세로선 중심에 정렬 */
+  top: 12px;           /* 밑변(y=19)이 브래킷 top(18)에 flush → 세로선에 붙음 */
   border-left: 5px solid transparent;
   border-right: 5px solid transparent;
   border-bottom: 7px solid var(--acc);
@@ -467,7 +697,7 @@ a.node.linked:hover .more { opacity: 1; }
   display: flex;
   gap: 14px;
   width: 100%;
-  max-width: 900px;
+  max-width: 1100px;
   justify-content: center;
   flex-wrap: wrap;
 }
@@ -476,7 +706,7 @@ a.node.linked:hover .more { opacity: 1; }
 /* 반복 루프 박스 */
 .loop {
   width: 100%;
-  max-width: 760px;
+  max-width: var(--flow-maxw);
   border: 2px dashed var(--acc);
   border-radius: var(--r-lg);
   padding: 30px 18px 18px;
@@ -615,6 +845,7 @@ a.node.linked:hover .more { opacity: 1; }
   margin: 16px 0;
   font-size: 13.5px;
   color: var(--mut);
+  max-width: 920px;
 }
 .note b { color: var(--ink); }
 .note.warn { border-left-color: var(--c-safe); }
@@ -632,9 +863,9 @@ code.i { font-family: var(--mono); font-size: 12.5px; background: var(--bg2); pa
   .page-title { font-size: 24px; }
   .branch { flex-direction: column; align-items: center; }
   .branch .node { max-width: 660px; }
-  .split, .lanes { flex-direction: column; align-items: center; }
-  .split > .col, .lanes > .lane { max-width: 660px; width: 100%; }
-  .gate { max-width: 100%; }
+
+  /* .split·.lanes·.guard·.gate 의 세로 스택과 BPMN 레일 on/off 는 이제 @container
+     (.flow 폭) 가 담당한다 → 모바일·중첩·루프 안을 한 규칙으로 일관 처리. */
 }
 
 /* ---------- 프린트 ---------- */

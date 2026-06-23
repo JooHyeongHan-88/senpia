@@ -40,39 +40,40 @@
     </div>
     <div class="arrow"></div>
 
-    <div class="gate"><span class="q">◇ 이미 같은 앱 실행 중?</span><small>ServerAlreadyRunning — 동일 포트에 프로브 응답</small></div>
-    <div class="split">
-      <div class="col">
-        <span class="edge-lbl no">예</span>
-        <div class="arrow short"></div>
+    <!-- 단일 인스턴스 게이트: '예'는 옆으로 빠져 종료, spine 은 계속 -->
+    <div class="guard">
+      <div class="gate"><span class="q">◇ 이미 같은 앱 실행 중?</span><small>ServerAlreadyRunning — 동일 포트에 프로브 응답</small></div>
+      <div class="exit right">
+        <span class="edge-lbl no">예 — 점유됨</span>
         <div class="node cat-safe">
           <div class="node-cat">단일 인스턴스</div>
           <div class="node-title">기존 탭 열고 sys.exit(0)</div>
           <div class="mod">_probe_same_app → webbrowser.open</div>
           <div class="desc">기존 인스턴스 재사용. 새 프로세스 없음.</div>
         </div>
+        <div class="arrow short"></div>
+        <div class="term">■ 종료</div>
+      </div>
+    </div>
+    <div class="arrow lbl" data-label="아니오 — 계속"></div>
+
+    <!-- 후보 포트 게이트: 둘 다 바인딩으로 합류하는 대칭 분기 -->
+    <div class="gate"><span class="q">◇ 후보 포트 +1..+4 도 전부 점유?</span></div>
+    <div class="split">
+      <div class="col">
+        <span class="edge-lbl no">전수 실패</span>
+        <div class="arrow short"></div>
+        <div class="node cat-life">
+          <div class="node-title">OS 동적 포트 (최후수단)</div>
+          <div class="mod">bind(('127.0.0.1', 0))</div>
+        </div>
       </div>
       <div class="col">
-        <span class="edge-lbl yes">아니오</span>
+        <span class="edge-lbl yes">후보 성공</span>
         <div class="arrow short"></div>
-        <div class="gate"><span class="q">◇ 후보 포트 +1..+4 도 전부 점유?</span></div>
-        <div class="split">
-          <div class="col">
-            <span class="edge-lbl no">전수 실패</span>
-            <div class="arrow short"></div>
-            <div class="node cat-life">
-              <div class="node-title">OS 동적 포트 (최후수단)</div>
-              <div class="mod">bind(('127.0.0.1', 0))</div>
-            </div>
-          </div>
-          <div class="col">
-            <span class="edge-lbl yes">후보 성공</span>
-            <div class="arrow short"></div>
-            <div class="node cat-life">
-              <div class="node-title">후보 포트 바인딩 성공</div>
-              <div class="mod">set_runtime_port() 갱신</div>
-            </div>
-          </div>
+        <div class="node cat-life">
+          <div class="node-title">후보 포트 바인딩 성공</div>
+          <div class="mod">set_runtime_port() 갱신</div>
         </div>
       </div>
     </div>
@@ -181,47 +182,44 @@
         </div>
         <div class="arrow"></div>
 
-        <div class="gate"><span class="q">◇ 탭 닫힘? (EventSource 종료)</span></div>
-        <div class="split">
-          <div class="col">
+        <!-- 탭 생존 가드: '아니오(살아있음)'은 옆으로 빠져 루프 유지, spine 은 종료 진행 -->
+        <div class="guard">
+          <div class="gate"><span class="q">◇ 탭 닫힘? (EventSource 종료)</span></div>
+          <div class="exit right">
             <span class="edge-lbl yes">아니오 — 살아있음</span>
-            <div class="arrow short"></div>
             <div class="node cat-life">
               <div class="node-title">연결 유지 · ↻ 계속</div>
               <div class="mod">30s ping → 루프 상단으로</div>
             </div>
           </div>
-          <div class="col">
-            <span class="edge-lbl no">예 — 닫힘</span>
-            <div class="arrow short"></div>
+        </div>
+        <div class="arrow lbl" data-label="예 — 닫힘"></div>
+
+        <div class="node cat-life wide">
+          <div class="node-cat">유예</div>
+          <div class="node-title">disconnect_client(id) — 2s grace</div>
+          <div class="mod">_pending_disconnects: threading.Timer · PRESENCE_RECONNECT_GRACE</div>
+          <div class="desc">새로고침·탭 복제 흡수. 탭 복제는 _connections 카운트로 — 마지막 연결이 끊겨야 유예 진입.</div>
+        </div>
+        <div class="arrow"></div>
+
+        <!-- 빈 클라이언트 확인: '아니오(다른 탭)'은 옆으로 빠져 루프 유지, spine 은 종료 -->
+        <div class="guard">
+          <div class="gate"><span class="q">◇ 2s 후 clients == 0?</span></div>
+          <div class="exit right">
+            <span class="edge-lbl no">아니오 — 다른 탭 있음</span>
             <div class="node cat-life">
-              <div class="node-cat">유예</div>
-              <div class="node-title">disconnect_client(id) — 2s grace</div>
-              <div class="mod">_pending_disconnects: threading.Timer · PRESENCE_RECONNECT_GRACE</div>
-              <div class="desc">새로고침·탭 복제 흡수. 탭 복제는 _connections 카운트로 — 마지막 연결이 끊겨야 유예 진입.</div>
-            </div>
-            <div class="arrow short"></div>
-            <div class="gate"><span class="q">◇ 2s 후 clients == 0?</span></div>
-            <div class="split">
-              <div class="col">
-                <span class="edge-lbl yes">아니오 — 다른 탭 있음</span>
-                <div class="arrow short"></div>
-                <div class="node cat-life">
-                  <div class="node-title">타이머 취소 · 계속</div>
-                  <div class="mod">Timer.cancel() — lock 밖에서 호출</div>
-                </div>
-              </div>
-              <div class="col">
-                <span class="edge-lbl no">예 — 아무도 없음</span>
-                <div class="arrow short"></div>
-                <div class="node cat-safe">
-                  <div class="node-title">server.should_exit = True</div>
-                  <div class="mod">watchdog → uvicorn 종료</div>
-                  <div class="desc">Windows 는 SIGTERM 대신 이 경로만 사용.</div>
-                </div>
-              </div>
+              <div class="node-title">타이머 취소 · 계속</div>
+              <div class="mod">Timer.cancel() — lock 밖에서 호출</div>
             </div>
           </div>
+        </div>
+        <div class="arrow lbl" data-label="예 — 아무도 없음"></div>
+
+        <div class="node cat-safe wide">
+          <div class="node-title">server.should_exit = True</div>
+          <div class="mod">watchdog → uvicorn 종료</div>
+          <div class="desc">Windows 는 SIGTERM 대신 이 경로만 사용.</div>
         </div>
 
       </div>
@@ -240,36 +238,34 @@
     </div>
     <div class="arrow"></div>
 
-    <div class="gate"><span class="q">◇ frozen(EXE) 환경?</span><small>dev 는 Vite 프록시라 origin 이 달라 → 가드 비활성</small></div>
-    <div class="split">
-      <div class="col">
+    <!-- frozen 게이트: dev 는 옆으로 빠져 자동 통과, spine 은 frozen 검증 -->
+    <div class="guard">
+      <div class="gate"><span class="q">◇ frozen(EXE) 환경?</span><small>dev 는 Vite 프록시라 origin 이 달라 → 가드 비활성</small></div>
+      <div class="exit right">
         <span class="edge-lbl no">아니오 (dev)</span>
-        <div class="arrow short"></div>
         <div class="node cat-life"><div class="node-title">자동 통과</div><div class="mod">가드 비활성</div></div>
       </div>
+    </div>
+    <div class="arrow lbl" data-label="예 (frozen)"></div>
+
+    <div class="gate"><span class="q">◇ Origin 헤더 있음?</span></div>
+    <div class="split">
       <div class="col">
-        <span class="edge-lbl yes">예 (frozen)</span>
+        <span class="edge-lbl yes">있음</span>
         <div class="arrow short"></div>
-        <div class="gate"><span class="q">◇ Origin 헤더 있음?</span></div>
+        <div class="gate"><span class="q">◇ ALLOWED_ORIGIN 일치?</span><small>config.ALLOWED_ORIGIN — 런타임 포트 매 요청 참조</small></div>
         <div class="split">
-          <div class="col">
-            <span class="edge-lbl yes">있음</span>
-            <div class="arrow short"></div>
-            <div class="gate"><span class="q">◇ ALLOWED_ORIGIN 일치?</span><small>config.ALLOWED_ORIGIN — 런타임 포트 매 요청 참조</small></div>
-            <div class="split">
-              <div class="col"><span class="edge-lbl yes">일치</span><div class="arrow short"></div><div class="node cat-life"><div class="node-title">통과</div></div></div>
-              <div class="col"><span class="edge-lbl no">불일치</span><div class="arrow short"></div><div class="node cat-safe"><div class="node-title">403</div></div></div>
-            </div>
-          </div>
-          <div class="col">
-            <span class="edge-lbl no">없음</span>
-            <div class="arrow short"></div>
-            <div class="gate"><span class="q">◇ sec-fetch-site: same-origin/none?</span></div>
-            <div class="split">
-              <div class="col"><span class="edge-lbl yes">예</span><div class="arrow short"></div><div class="node cat-life"><div class="node-title">통과</div></div></div>
-              <div class="col"><span class="edge-lbl no">아니오</span><div class="arrow short"></div><div class="node cat-safe"><div class="node-title">403</div></div></div>
-            </div>
-          </div>
+          <div class="col"><span class="edge-lbl yes">일치</span><div class="arrow short"></div><div class="node cat-life"><div class="node-title">통과</div></div></div>
+          <div class="col"><span class="edge-lbl no">불일치</span><div class="arrow short"></div><div class="node cat-safe"><div class="node-title">403</div></div></div>
+        </div>
+      </div>
+      <div class="col">
+        <span class="edge-lbl no">없음</span>
+        <div class="arrow short"></div>
+        <div class="gate"><span class="q">◇ sec-fetch-site: same-origin/none?</span></div>
+        <div class="split">
+          <div class="col"><span class="edge-lbl yes">예</span><div class="arrow short"></div><div class="node cat-life"><div class="node-title">통과</div></div></div>
+          <div class="col"><span class="edge-lbl no">아니오</span><div class="arrow short"></div><div class="node cat-safe"><div class="node-title">403</div></div></div>
         </div>
       </div>
     </div>
