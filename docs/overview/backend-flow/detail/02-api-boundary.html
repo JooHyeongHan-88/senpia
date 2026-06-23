@@ -6,7 +6,7 @@
 <title>02 · HTTP API 경계</title>
 <link rel="stylesheet" href="../assets/theme.css">
 </head>
-<body>
+<body id="top">
 
 <nav class="topnav">
   <div class="inner">
@@ -113,11 +113,34 @@
       <tr><td class="mono">GET /api/artifact/preview</td><td class="mono">artifact.py</td><td>parquet head(N) 미리보기(데이터 칩)</td></tr>
       <tr><td class="mono">GET /api/artifact/csv</td><td class="mono">artifact.py</td><td>parquet → CSV 변환 다운로드</td></tr>
       <tr><td class="mono">POST /api/artifact/reveal</td><td class="mono">artifact.py</td><td>산출물 폴더를 OS 탐색기에서 열기</td></tr>
+      <tr><td class="mono">GET /api/extensions</td><td class="mono">extensions.py</td><td>UI 있는 확장 목록 — 패널 런처 드롭다운 카탈로그</td></tr>
     </tbody>
   </table>
 
   <div class="note"><b>정적 mount:</b> <code class="i">/</code>(SPA) · <code class="i">/assets</code> · <code class="i">/result</code>(산출물) · <code class="i">/workspace</code>(도구 생성 파일).
   <b>확장 라우트:</b> <code class="i">extensions/</code> 의 각 도구가 <code class="i">/api/ext/&lt;tool&gt;/*</code>(API)와 <code class="i">/ext/&lt;tool&gt;</code>(SPA)로 컨벤션 기반 자동 마운트(host 코드 등록 불필요).</div>
+
+  <details class="allnav">
+    <summary>전체 페이지</summary>
+    <div class="allnav-grid">
+      <a href="../index.html">◉ 전체 흐름도</a>
+      <a href="01-boot-lifecycle.html">01 기동·생명주기</a>
+      <a href="02-api-boundary.html" aria-current="page">02 API 경계</a>
+      <a href="03-chat-turn.html">03 채팅 턴·SSE</a>
+      <a href="04-turn-loop.html">04 턴 루프</a>
+      <a href="04b-provider-astream.html">04b provider.astream</a>
+      <a href="05-call-handlers.html">05 tool_call 핸들러</a>
+      <a href="05b-sentinel.html">05b sentinel</a>
+      <a href="06-dispatch.html">06 디스패치</a>
+      <a href="07-prompt.html">07 프롬프트</a>
+      <a href="08-state.html">08 상태</a>
+      <a href="09-artifact-pipeline.html">09 산출물</a>
+      <a href="10-chart-pipeline.html">10 차트</a>
+      <a href="11-tools-registries.html">11 도구·레지스트리</a>
+      <a href="12-safety.html">12 안전장치</a>
+      <a href="13-settings-update.html">13 설정·업데이트</a>
+    </div>
+  </details>
 
   <div class="xlinks">
     <a href="../index.html">← 메인 흐름도</a>
@@ -127,5 +150,7 @@
   </div>
   <div class="foot">출처: <code class="i">docs/overview/04-backend-flow.md</code> §4 · <code class="i">backend/api/chat.py</code> · <code class="i">backend/api/deps.py</code></div>
 </div>
+
+<a class="to-top" href="#top" aria-label="맨 위로" title="맨 위로">↑</a>
 </body>
 </html>

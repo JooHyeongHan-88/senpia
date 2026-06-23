@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>프로젝트 개요 — Local AI Agent Platform</title>
+<link rel="stylesheet" href="backend-flow/assets/theme.css">
+</head>
+<body id="top">
+
+<nav class="topnav">
+  <div class="inner">
+    <a class="home" href="index.html">● 프로젝트 개요</a>
+    <span class="crumb"><b>Overview</b> — 무엇을 만들고, 어떻게 동작하며, 어떻게 배포되는가</span>
+    <span class="mark">Local AI Agent Platform</span>
+  </div>
+</nav>
+
+<div class="wrap">
+
+  <header class="hd">
+    <div class="kicker">Project Overview</div>
+    <h1 class="page-title">웹 기술로 만든 AI Agent 채팅 앱을 단일 <code class="i">.exe</code> 하나로</h1>
+    <p class="subtitle">
+      Svelte(Vite) 정적 자산을 FastAPI 가 서빙하고 PyInstaller 로 단일 EXE 로 패키징하는
+      <b>로컬 AI Agent 채팅 플랫폼</b>. 다중 대화 세션 · LLM 설정 · 자동 업데이트 · 격리된 확장 시스템 내장.
+      핵심 컨셉은 <b>"브라우저가 화면이고, EXE 가 서버다"</b> — 사용자는 EXE 를 더블클릭만 하면
+      로컬에서 백엔드가 켜지고 기본 브라우저에 채팅 화면이 열린다.
+    </p>
+  </header>
+
+  <!-- 프로젝트 한눈에 -->
+  <div class="chips">
+    <span class="chip">3계층 <span class="chip mono">Svelte · FastAPI · PyInstaller</span></span>
+    <span class="chip">패키지 <span class="chip mono">uv · npm</span></span>
+    <span class="chip">단일 EXE 배포 <span class="chip mono">onefile</span></span>
+    <span class="chip">자동 업데이트 <span class="chip mono">sha256 · self-replace</span></span>
+    <span class="chip">확장 시스템 <span class="chip mono">extensions/</span></span>
+  </div>
+
+  <!-- ===================== 읽는 순서 ===================== -->
+  <div class="sec" id="docs"><span class="sec-no">§</span><h2>읽는 순서 — 큰 그림부터 차례로</h2><span class="sec-note">5개 문서</span></div>
+  <p class="lead">각 문서는 큰 그림부터 세부로 이어진다. 처음 접한다면 ① → ⑤ 순서로 읽으면 된다.</p>
+
+  <div class="grid c2">
+    <a class="node linked cat-life wide" href="01-project-overview.md">
+      <div class="node-cat">① 프로젝트 전체 흐름</div>
+      <div class="node-title">무엇을 만드는 프로젝트인가?</div>
+      <div class="desc">기술 스택 · 3계층 구조 · 디렉터리 · 개발→빌드→배포→실행→업데이트 5단계.</div>
+      <span class="more">읽기 →</span>
+    </a>
+    <a class="node linked cat-core wide" href="02-agent-and-extensibility.md">
+      <div class="node-cat">② 에이전트 · 확장성</div>
+      <div class="node-title">에이전트는 어떻게 정의·확장하는가?</div>
+      <div class="desc">PROMPTS / SKILLS / AGENTS 마크다운 · 도구 등록 · 격리된 확장 시스템.</div>
+      <span class="more">읽기 →</span>
+    </a>
+    <a class="node linked cat-data wide" href="03-ux-ui.md">
+      <div class="node-cat">③ 구현된 UX/UI</div>
+      <div class="node-title">최종 사용자는 어떤 화면을 쓰는가?</div>
+      <div class="desc">3단 레이아웃 · 작업 진행 가시화 · 아티팩트 패널 · 차트 인터랙션 · 큐레이션 핸드오프.</div>
+      <span class="more">읽기 →</span>
+    </a>
+    <a class="node linked cat-api wide" href="04-backend-flow.md">
+      <div class="node-cat">④ 백엔드 동작 흐름</div>
+      <div class="node-title">백엔드는 내부적으로 어떻게 동작하는가?</div>
+      <div class="desc">기동 시퀀스 · run_turn 한 턴 처리 · 도구/레지스트리 · 산출물·차트 파이프라인 · 안전장치.</div>
+      <span class="more">읽기 →</span>
+    </a>
+    <a class="node linked cat-cfg wide" href="05-build-and-update.md">
+      <div class="node-cat">⑤ 빌드 &amp; 업데이트</div>
+      <div class="node-title">어떻게 빌드·배포·자동 업데이트되는가?</div>
+      <div class="desc">release.ps1 파이프라인 · 채널(qa/prod) · 자동 업데이트 4단계 · <code class="i">.env</code> 환경 변수.</div>
+      <span class="more">읽기 →</span>
+    </a>
+  </div>
+
+  <!-- ===================== 인터랙티브 흐름도 ===================== -->
+  <div class="sec" id="flow"><span class="sec-no">◆</span><h2>인터랙티브 흐름도</h2><span class="sec-note">시각 자료</span></div>
+  <p class="lead">④ 백엔드 문서를 <b>BPMN 풍 인터랙티브 흐름도</b>로 시각화한 심화판. 기동부터 채팅 한 턴이
+    처리·영속되기까지를 결정 게이트 · 병렬 분기 · 반복 루프로 한 장에 담고, 각 노드를 클릭하면
+    담당 모듈의 상세 흐름도(15페이지)로 들어간다.</p>
+
+  <div class="grid c2">
+    <a class="node linked cat-core wide" href="backend-flow/index.html">
+      <div class="node-cat">◆ 추천 — 백엔드 흐름도</div>
+      <div class="node-title">백엔드 동작 전체 흐름 (인터랙티브)</div>
+      <div class="mod">backend-flow/index.html · 허브 + 상세 15페이지</div>
+      <div class="desc">기동·생명주기 → HTTP 경계 → run_turn 오케스트레이션 → 스트리밍·영속화 → 가로지르는 서브시스템.</div>
+      <span class="more">흐름도 열기 →</span>
+    </a>
+    <div class="card soft">
+      <h3>읽는 법</h3>
+      <p><b>◇ 조건</b> = 분기점, <b>▽ 병렬</b> = 동시 실행, 점선 박스 = 반복 루프. 각 노드는 담당
+        <b>모듈·함수</b>를 표기하고, 클릭하면 그 영역의 상세 흐름도로 이동한다. 상단 섹션 점프 nav 와
+        각 페이지의 '전체 페이지' 메뉴로 자유롭게 오갈 수 있다.</p>
+    </div>
+  </div>
+
+  <!-- ===================== 더 깊이 ===================== -->
+  <div class="sec" id="deeper"><span class="sec-no">→</span><h2>더 깊이 들어가려면</h2><span class="sec-note">개발자 참고서</span></div>
+  <p class="lead">위 개요로 큰 그림을 잡았다면, 아래 문서들이 실제 확장·구현 단계의 참고서다.</p>
+
+  <div class="xlinks">
+    <a href="../guides/README.md">에이전트 확장 가이드 (docs/guides)</a>
+    <a href="../harness/README.md">하니스 내부 흐름 (docs/harness)</a>
+    <a href="../../.claude/rules/backend_architecture.md">아키텍처 세부 결정 (.claude/rules)</a>
+  </div>
+
+  <div class="foot">
+    프로젝트 소개 자료 · 출처: <code class="i">docs/overview/*.md</code> · <code class="i">README.md</code> ·
+    백엔드 소스(읽기 전용 참조). 코드와 어긋나면 소스가 진실원천.
+  </div>
+
+</div>
+
+<a class="to-top" href="#top" aria-label="맨 위로" title="맨 위로">↑</a>
+</body>
+</html>

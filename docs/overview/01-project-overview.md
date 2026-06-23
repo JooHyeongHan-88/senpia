@@ -154,7 +154,7 @@ svelte-fastapi-exe/
 ├─ backend/             # ② 서버 층 + ③ 에이전트 층
 │   ├─ main.py          #    엔트리포인트 (FastAPI 앱 조립·기동)
 │   ├─ core/            #    경로/포트/생명주기/업데이트/산출물 저장
-│   ├─ api/             #    HTTP 엔드포인트 (도메인별 라우터 7개)
+│   ├─ api/             #    HTTP 엔드포인트 (도메인별 라우터 8개)
 │   ├─ agent/           #    LLM 에이전트 하니스 (harness/·providers/·registries/·tools/ …)
 │   ├─ settings/        #    LLM 설정 저장소 (settings.json)
 │   ├─ scripts/         #    프로젝트 전용 Python 유틸 패키지 (에이전트에 노출)

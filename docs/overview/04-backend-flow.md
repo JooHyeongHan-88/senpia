@@ -67,7 +67,7 @@ dev 모드에서 `build/web/`이 없으면 ⑤의 SPA 서빙과 ⑥이 생략된
 
 ## 4. HTTP API 전체 지도
 
-`backend/api/`의 라우터 7개. 모든 엔드포인트에 **Origin 가드**(`require_local_origin`)가
+`backend/api/`의 라우터 8개. 모든 엔드포인트에 **Origin 가드**(`require_local_origin`)가
 적용된다 — frozen EXE에서 외부 출처 요청을 차단하는 보안 경계 (dev는 Vite 프록시라 자동 통과).
 
 | 메서드·경로 | 라우터 | 역할 |
@@ -92,6 +92,7 @@ dev 모드에서 `build/web/`이 없으면 ⑤의 SPA 서빙과 ⑥이 생략된
 | `GET /api/artifact/preview` | artifact.py | parquet head(N) 미리보기 (데이터 칩 패널) |
 | `GET /api/artifact/csv` | artifact.py | parquet → CSV 변환 다운로드 |
 | `POST /api/artifact/reveal` | artifact.py | 산출물이 든 폴더를 OS 파일 탐색기에서 열기 (패널 '폴더 열기' 버튼) |
+| `GET /api/extensions` | extensions.py | UI 있는 확장 목록 (패널 런처 드롭다운 카탈로그) |
 
 이외 정적 mount: `/` (SPA) · `/assets` · `/result` (산출물) · `/workspace` (도구 생성 파일).
 
@@ -123,6 +124,7 @@ dev 모드에서 `build/web/`이 없으면 ⑤의 SPA 서빙과 ⑥이 생략된
 | `update.py` | 업데이트 4단계의 HTTP 노출 |
 | `chart.py` | 차트 필터/레전드 액션 → 재렌더된 ECharts option 반환 |
 | `artifact.py` | parquet 미리보기·CSV 변환 + 산출물 폴더 탐색기 열기 (데이터 칩 전용) |
+| `extensions.py` | 확장 카탈로그 (`/api/extensions`, 패널 런처 드롭다운용) |
 
 ### `backend/agent/` — 에이전트 하니스 (핵심)
 
@@ -195,7 +197,7 @@ run_turn()
 ```
 
 루프가 반복되는 이유: LLM이 "도구 호출 → 결과 확인 → 다음 행동 결정"을 여러 번
-거치며 작업을 완성하기 때문. 상한(8회) 도달 시 그때까지의 결과로 **응급 응답(salvage)**을
+거치며 작업을 완성하기 때문. 상한(12회) 도달 시 그때까지의 결과로 **응급 응답(salvage)**을
 만들어 반환한다 — todo가 모두 끝난 상태면 "완료(예산 소진)", 아니면 "미완료 주의"로 구분 표시.
 잔여 2회(wind-down) 시점에 하니스가 마무리 지시문을 자동 주입해 남은 호출을 결과 표시에 쓰게 한다.
 
@@ -503,7 +505,7 @@ open_curation(tool, sources, mapping, mark)
   ② 번들 스펙 <tool>.bundle.json 작성 (현재 턴 슬롯)
   ③ ToolResult(data={kind:"extension"}) 반환 → extension 칩이 아티팩트 패널에 생성·자동 오픈
      → 패널 안에 /ext/<tool>/?bundle=... 를 same-origin iframe으로 임베드
-     (패널 헤더 '새 탭' 버튼으로 별도 창도 열 수 있음, 칩은 localStorage 영속)
+     (패널 헤더 '최대화' 버튼으로 본문을 뷰포트 전체로 확대 가능, 칩은 localStorage 영속)
 ```
 
 ### App.spec 선별 번들

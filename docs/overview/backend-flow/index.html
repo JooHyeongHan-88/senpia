@@ -6,7 +6,7 @@
 <title>백엔드 동작 전체 흐름</title>
 <link rel="stylesheet" href="assets/theme.css">
 </head>
-<body>
+<body id="top">
 
 <nav class="topnav">
   <div class="inner">
@@ -49,8 +49,17 @@
     <span class="it"><span class="sw" style="background:var(--c-decision)"></span> 결정 게이트</span>
   </div>
 
+  <!-- 섹션 바로가기 -->
+  <nav class="section-nav" aria-label="섹션 바로가기">
+    <a href="#sec-a"><b>A</b>기동·생명주기</a>
+    <a href="#sec-b"><b>B</b>HTTP 경계</a>
+    <a href="#sec-c"><b>C</b>run_turn</a>
+    <a href="#sec-d"><b>D</b>영속화</a>
+    <a href="#sec-e"><b>E</b>서브시스템</a>
+  </nav>
+
   <!-- ===================== A. 기동 & 생명주기 ===================== -->
-  <div class="sec"><span class="sec-no">A</span><h2>기동 &amp; 생명주기</h2><span class="sec-note">앱이 살아있는 조건</span></div>
+  <div class="sec" id="sec-a"><span class="sec-no">A</span><h2>기동 &amp; 생명주기</h2><span class="sec-note">앱이 살아있는 조건</span></div>
 
   <div class="flow">
     <div class="term">● 시작 · EXE 더블클릭</div>
@@ -168,7 +177,7 @@
   <!-- ===================== B. HTTP 경계 → 턴 진입 ===================== -->
   <div class="arrow tall lbl" data-label="사용자가 메시지 전송"></div>
 
-  <div class="sec"><span class="sec-no">B</span><h2>HTTP 경계 → 채팅 턴 진입</h2><span class="sec-note">backend/api</span></div>
+  <div class="sec" id="sec-b"><span class="sec-no">B</span><h2>HTTP 경계 → 채팅 턴 진입</h2><span class="sec-note">backend/api</span></div>
 
   <div class="flow">
     <a class="node linked cat-api wide" href="detail/02-api-boundary.html">
@@ -221,7 +230,7 @@
 
   <!-- ===================== C. run_turn 오케스트레이션 ===================== -->
   <div class="arrow"></div>
-  <div class="sec"><span class="sec-no">C</span><h2>run_turn — 한 턴의 오케스트레이션</h2><span class="sec-note">agent/harness</span></div>
+  <div class="sec" id="sec-c"><span class="sec-no">C</span><h2>run_turn — 한 턴의 오케스트레이션</h2><span class="sec-note">agent/harness</span></div>
 
   <div class="flow">
     <a class="node linked cat-core wide" href="detail/04-turn-loop.html">
@@ -385,7 +394,7 @@
 
   <!-- ===================== D. 스트리밍 → 영속화 ===================== -->
   <div class="arrow"></div>
-  <div class="sec"><span class="sec-no">D</span><h2>스트리밍 → 영속화</h2><span class="sec-note">SSE · stores</span></div>
+  <div class="sec" id="sec-d"><span class="sec-no">D</span><h2>스트리밍 → 영속화</h2><span class="sec-note">SSE · stores</span></div>
 
   <div class="flow">
     <a class="node linked cat-core wide" href="detail/03-chat-turn.html">
@@ -426,7 +435,7 @@
   </div>
 
   <!-- ===================== E. cross-cut ===================== -->
-  <div class="sec"><span class="sec-no">E</span><h2>가로지르는 서브시스템</h2><span class="sec-note">턴 흐름을 떠받치는 영역</span></div>
+  <div class="sec" id="sec-e"><span class="sec-no">E</span><h2>가로지르는 서브시스템</h2><span class="sec-note">턴 흐름을 떠받치는 영역</span></div>
   <p class="lead">위 한 턴 흐름의 곳곳에서 호출되는 공통 인프라. 각 카드를 클릭하면 그 서브시스템의 상세 흐름도로 이동한다.</p>
 
   <div class="grid c2">
@@ -503,5 +512,7 @@
   </div>
 
 </div>
+
+<a class="to-top" href="#top" aria-label="맨 위로" title="맨 위로">↑</a>
 </body>
 </html>

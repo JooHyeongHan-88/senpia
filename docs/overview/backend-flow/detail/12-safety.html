@@ -6,7 +6,7 @@
 <title>12 · 안전장치 카탈로그</title>
 <link rel="stylesheet" href="../assets/theme.css">
 </head>
-<body>
+<body id="top">
 
 <nav class="topnav">
   <div class="inner">
@@ -103,6 +103,28 @@
   </div>
   <div class="note"><b>주의:</b> <code class="i">save_artifact(kind='json', content=&lt;dict&gt;)</code> 처럼 값은 줬는데 타입이 str 대신 dict 면 형식 오류 → LLM self-correct 경로(사용자 미개입).</div>
 
+  <details class="allnav">
+    <summary>전체 페이지</summary>
+    <div class="allnav-grid">
+      <a href="../index.html">◉ 전체 흐름도</a>
+      <a href="01-boot-lifecycle.html">01 기동·생명주기</a>
+      <a href="02-api-boundary.html">02 API 경계</a>
+      <a href="03-chat-turn.html">03 채팅 턴·SSE</a>
+      <a href="04-turn-loop.html">04 턴 루프</a>
+      <a href="04b-provider-astream.html">04b provider.astream</a>
+      <a href="05-call-handlers.html">05 tool_call 핸들러</a>
+      <a href="05b-sentinel.html">05b sentinel</a>
+      <a href="06-dispatch.html">06 디스패치</a>
+      <a href="07-prompt.html">07 프롬프트</a>
+      <a href="08-state.html">08 상태</a>
+      <a href="09-artifact-pipeline.html">09 산출물</a>
+      <a href="10-chart-pipeline.html">10 차트</a>
+      <a href="11-tools-registries.html">11 도구·레지스트리</a>
+      <a href="12-safety.html" aria-current="page">12 안전장치</a>
+      <a href="13-settings-update.html">13 설정·업데이트</a>
+    </div>
+  </details>
+
   <div class="xlinks">
     <a href="../index.html">← 메인 흐름도</a>
     <a href="04-turn-loop.html">04 R1·R7·F6 →</a>
@@ -112,5 +134,7 @@
   </div>
   <div class="foot">출처: <code class="i">.claude/rules/harness_resilience.md</code> · <code class="i">docs/overview/04-backend-flow.md</code> §16</div>
 </div>
+
+<a class="to-top" href="#top" aria-label="맨 위로" title="맨 위로">↑</a>
 </body>
 </html>

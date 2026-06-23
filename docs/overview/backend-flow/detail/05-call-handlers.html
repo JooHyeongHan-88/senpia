@@ -6,7 +6,7 @@
 <title>05 · tool_call 핸들러</title>
 <link rel="stylesheet" href="../assets/theme.css">
 </head>
-<body>
+<body id="top">
 
 <nav class="topnav">
   <div class="inner">
@@ -165,6 +165,28 @@
 
   <div class="note warn"><b>공유 가드 계약 — "통과면 None, 차단이면 이벤트":</b> <code class="i">_guard_tool_args</code>·<code class="i">_loop_guard_denial</code> 는 이 계약으로 일관. 핸들러는 None 이면 다음 단계로, 이벤트면 yield 후 return.</div>
 
+  <details class="allnav">
+    <summary>전체 페이지</summary>
+    <div class="allnav-grid">
+      <a href="../index.html">◉ 전체 흐름도</a>
+      <a href="01-boot-lifecycle.html">01 기동·생명주기</a>
+      <a href="02-api-boundary.html">02 API 경계</a>
+      <a href="03-chat-turn.html">03 채팅 턴·SSE</a>
+      <a href="04-turn-loop.html">04 턴 루프</a>
+      <a href="04b-provider-astream.html">04b provider.astream</a>
+      <a href="05-call-handlers.html" aria-current="page">05 tool_call 핸들러</a>
+      <a href="05b-sentinel.html">05b sentinel</a>
+      <a href="06-dispatch.html">06 디스패치</a>
+      <a href="07-prompt.html">07 프롬프트</a>
+      <a href="08-state.html">08 상태</a>
+      <a href="09-artifact-pipeline.html">09 산출물</a>
+      <a href="10-chart-pipeline.html">10 차트</a>
+      <a href="11-tools-registries.html">11 도구·레지스트리</a>
+      <a href="12-safety.html">12 안전장치</a>
+      <a href="13-settings-update.html">13 설정·업데이트</a>
+    </div>
+  </details>
+
   <div class="xlinks">
     <a href="../index.html">← 메인 흐름도</a>
     <a href="04-turn-loop.html">← 04 턴 루프</a>
@@ -174,5 +196,7 @@
   </div>
   <div class="foot">출처: <code class="i">docs/harness/call-handlers.md</code> · <code class="i">harness_resilience.md</code> F3·R4</div>
 </div>
+
+<a class="to-top" href="#top" aria-label="맨 위로" title="맨 위로">↑</a>
 </body>
 </html>
