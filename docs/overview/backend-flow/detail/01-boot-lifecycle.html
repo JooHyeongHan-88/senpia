@@ -253,19 +253,23 @@
       <div class="col">
         <span class="edge-lbl yes">있음</span>
         <div class="arrow short"></div>
-        <div class="gate"><span class="q">◇ ALLOWED_ORIGIN 일치?</span><small>config.ALLOWED_ORIGIN — 런타임 포트 매 요청 참조</small></div>
-        <div class="split">
-          <div class="col"><span class="edge-lbl yes">일치</span><div class="arrow short"></div><div class="node cat-life"><div class="node-title">통과</div></div></div>
-          <div class="col"><span class="edge-lbl no">불일치</span><div class="arrow short"></div><div class="node cat-safe"><div class="node-title">403</div></div></div>
+        <div class="subflow">
+          <div class="gate"><span class="q">◇ ALLOWED_ORIGIN 일치?</span><small>config.ALLOWED_ORIGIN — 런타임 포트 매 요청 참조</small></div>
+          <div class="split">
+            <div class="col"><span class="edge-lbl yes">일치</span><div class="arrow short"></div><div class="node cat-life"><div class="node-title">통과</div></div></div>
+            <div class="col"><span class="edge-lbl no">불일치</span><div class="arrow short"></div><div class="node cat-safe"><div class="node-title">403</div></div></div>
+          </div>
         </div>
       </div>
       <div class="col">
         <span class="edge-lbl no">없음</span>
         <div class="arrow short"></div>
-        <div class="gate"><span class="q">◇ sec-fetch-site: same-origin/none?</span></div>
-        <div class="split">
-          <div class="col"><span class="edge-lbl yes">예</span><div class="arrow short"></div><div class="node cat-life"><div class="node-title">통과</div></div></div>
-          <div class="col"><span class="edge-lbl no">아니오</span><div class="arrow short"></div><div class="node cat-safe"><div class="node-title">403</div></div></div>
+        <div class="subflow">
+          <div class="gate"><span class="q">◇ sec-fetch-site: same-origin/none?</span></div>
+          <div class="split">
+            <div class="col"><span class="edge-lbl yes">예</span><div class="arrow short"></div><div class="node cat-life"><div class="node-title">통과</div></div></div>
+            <div class="col"><span class="edge-lbl no">아니오</span><div class="arrow short"></div><div class="node cat-safe"><div class="node-title">403</div></div></div>
+          </div>
         </div>
       </div>
     </div>

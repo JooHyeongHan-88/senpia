@@ -35,11 +35,11 @@
       <span class="loop-tab">↻ _SENTINEL_ROUTES 목록 순서대로 스캔</span>
       <span class="back-lbl">↻ 다음 route 로</span>
       <div class="flow">
-        <div class="gate"><span class="q">◇ call.name == route.name AND route.condition(ctx)?</span><small>이름 일치 + 컨텍스트 조건(is_sub_agent 등) 동시 충족</small></div>
-        <div class="split">
-          <div class="col">
+        <!-- 매칭: 예→exit right ■(반환), 아니오→spine(↻ 루프 계속) -->
+        <div class="guard">
+          <div class="gate"><span class="q">◇ call.name == route.name AND route.condition(ctx)?</span><small>이름 일치 + 컨텍스트 조건(is_sub_agent 등) 동시 충족</small></div>
+          <div class="exit right">
             <span class="edge-lbl yes">예 — 첫 매칭</span>
-            <div class="arrow short"></div>
             <div class="node cat-core">
               <div class="node-title">route.handler 반환</div>
               <div class="desc">스캔 즉시 중단. 순서가 우선순위 — activate_skill 이 call_sub_agent 보다 앞에 있어 조건 분기가 명확히 갈림.</div>
@@ -47,27 +47,14 @@
             <div class="arrow short"></div>
             <div class="term">■ 반환</div>
           </div>
-          <div class="col">
-            <span class="edge-lbl no">아니오</span>
-            <div class="arrow short"></div>
-            <div class="node cat-core">
-              <div class="node-title">↻ 다음 route</div>
-            </div>
-          </div>
         </div>
       </div>
     </div>
     <div class="arrow"></div>
-    <div class="gate"><span class="q">◇ 목록 끝까지 매칭 없음?</span></div>
-    <div class="split">
-      <div class="col">
-        <span class="edge-lbl yes">없음</span>
-        <div class="arrow short"></div>
-        <div class="node cat-core">
-          <div class="node-title">None 반환 → 일반도구 경로</div>
-          <div class="desc">조건 미충족 sentinel(agent_registry=None 인데 call_sub_agent 호출) → 일반 경로 → _execute_tool 의 L3 에러로 잡힘.</div>
-        </div>
-      </div>
+    <!-- 전수 스캔 후 매칭 없음 → None 반환 -->
+    <div class="node cat-core">
+      <div class="node-title">목록 전수 스캔 후 매칭 없음 → None 반환 (일반도구 경로)</div>
+      <div class="desc">조건 미충족 sentinel(agent_registry=None 인데 call_sub_agent 호출) → 일반 경로 → _execute_tool 의 L3 에러로 잡힘.</div>
     </div>
   </div>
 
@@ -166,34 +153,33 @@
       <div class="desc">LLM 이 비활성 SKILL 카탈로그를 보고 턴 도중 스스로 켜는 제3의 경로(트리거 매칭·슬래시 외).</div>
     </div>
     <div class="arrow"></div>
-    <div class="gate"><span class="q">◇ 이미 active_skills 에 있거나 카탈로그 부재?</span></div>
-    <div class="split">
-      <div class="col">
+    <!-- 이미 활성/카탈로그 부재 → exit left ■, 아니오→spine(새 활성화) -->
+    <div class="guard">
+      <div class="exit left">
         <span class="edge-lbl yes">예</span>
-        <div class="arrow short"></div>
         <div class="node cat-core">
           <div class="node-title">멱등 응답 — "이미 활성"</div>
         </div>
+        <div class="arrow short"></div>
+        <div class="term">■</div>
       </div>
-      <div class="col">
-        <span class="edge-lbl no">아니오 — 새 활성화</span>
-        <div class="arrow short"></div>
-        <div class="node cat-core wide">
-          <div class="node-title">_activate_skills_in_context(ctx, name) → turn-local active_skills 추가</div>
-        </div>
-        <div class="arrow short"></div>
-        <div class="node cat-core wide">
-          <div class="node-title">ctx.messages[0] = Message("system", recompose_system(active_skills))</div>
-          <div class="desc">시스템 프롬프트 동적 교체 — 새 SKILL 본문 포함.</div>
-        </div>
-        <div class="arrow short"></div>
-        <div class="node cat-api">
-          <div class="node-title">SkillActiveEvent(skills=[...]) yield</div>
-        </div>
-        <div class="arrow short"></div>
-        <div class="node cat-core"><div class="node-title">state.active_skills 갱신</div></div>
-      </div>
+      <div class="gate"><span class="q">◇ 이미 active_skills 에 있거나 카탈로그 부재?</span></div>
     </div>
+    <div class="arrow lbl" data-label="아니오 — 새 활성화"></div>
+    <div class="node cat-core wide">
+      <div class="node-title">_activate_skills_in_context(ctx, name) → turn-local active_skills 추가</div>
+    </div>
+    <div class="arrow short"></div>
+    <div class="node cat-core wide">
+      <div class="node-title">ctx.messages[0] = Message("system", recompose_system(active_skills))</div>
+      <div class="desc">시스템 프롬프트 동적 교체 — 새 SKILL 본문 포함.</div>
+    </div>
+    <div class="arrow short"></div>
+    <div class="node cat-api">
+      <div class="node-title">SkillActiveEvent(skills=[...]) yield</div>
+    </div>
+    <div class="arrow short"></div>
+    <div class="node cat-core"><div class="node-title">state.active_skills 갱신</div></div>
   </div>
 
   <div class="sec"><span class="sec-no">7</span><h2>call_sub_agent / call_sub_agents_parallel</h2></div>

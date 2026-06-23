@@ -57,10 +57,12 @@
           <div class="desc">completed/failed/skipped 허용. 범위 밖 → COMPLETED 폴백(LLM 오타 관대).</div>
         </div>
         <div class="arrow short"></div>
-        <div class="gate"><span class="q">◇ 전원 _TERMINAL_STATUSES?</span></div>
-        <div class="split">
-          <div class="col"><span class="edge-lbl yes">예</span><div class="arrow short"></div><div class="node cat-api"><div class="node-title">SkillCompleteEvent</div></div></div>
-          <div class="col"><span class="edge-lbl no">아니오</span><div class="arrow short"></div><div class="node cat-state"><div class="node-title">계속</div></div></div>
+        <div class="subflow">
+          <div class="gate"><span class="q">◇ 전원 _TERMINAL_STATUSES?</span></div>
+          <div class="split">
+            <div class="col"><span class="edge-lbl yes">예</span><div class="arrow short"></div><div class="node cat-api"><div class="node-title">SkillCompleteEvent</div></div></div>
+            <div class="col"><span class="edge-lbl no">아니오</span><div class="arrow short"></div><div class="node cat-state"><div class="node-title">계속</div></div></div>
+          </div>
         </div>
       </div>
       <div class="lane">

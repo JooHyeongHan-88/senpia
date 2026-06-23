@@ -198,6 +198,59 @@ p.lead { color: var(--mut); margin: 8px 0 14px; max-width: 920px; }
      중첩 흐름(루프 안 등)은 자기 .flow 가 컨테이너가 돼 좁으면 자동으로 세로 스택. */
   container-type: inline-size;
 }
+
+/* 중첩 분기 컨테이너 — col/lane 안의 결정 서브트리(게이트 + 2지 leaf 분기)를 감싼다.
+   col/lane 자체에 container-type 을 주면 그 ::before/::after 레일이 깨지므로 래퍼로 분리.
+   안의 .split 은 leaf 2개뿐이라, 좁은 폭에서도 세로 스택 대신 카드를 축소한 컴팩트 가로
+   레일로 유지한다(아래 `.subflow .split` 규칙) — 세로 스택 degrade 가 분기 화살표를
+   지워버리는 것을 막는다. */
+.subflow {
+  container-type: inline-size;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* 중첩 leaf 분기(.subflow 안 .split): 좁은 col/lane 폭(~268–300px)에서도 세로로 무너지지
+   않게 leaf 카드를 축소해 두 가지를 한 줄(가로 레일)로 유지. leaf 2개뿐이라 항상 가로로 충분.
+   @container 게이트 없이 항상 적용 — `.subflow .split`(특이도 0,2,0)이 @container max-width
+   블록의 `.split`(0,1,0) 세로 스택을 특이도로 덮는다(배치 순서 무관). */
+.subflow .split {
+  flex-direction: row;
+  flex-wrap: nowrap;
+  gap: 18px;
+  align-items: flex-start;
+}
+.subflow .split > .col {            /* 200px min 해제 → 카드 내용 폭으로 */
+  flex: 0 1 auto;
+  max-width: none;
+}
+.subflow .split .node {             /* 컴팩트 카드 */
+  width: fit-content;
+  max-width: 100%;
+  padding: 8px 13px;
+}
+.subflow .split .node-title { font-size: 12.5px; }
+
+/* 가로 레일 — min-width:760 블록의 기하를 그대로 재사용하되 컨테이너 폭 무관 항상 그린다.
+   (subflow 는 항상 <760 이라 min-width:760 레일은 발화 안 함 → 중복 없음.) */
+.subflow .split::before {                 /* 게이트 → 레일 진입 스텁 */
+  content: ""; position: absolute; left: 50%; top: 0;
+  height: 10px; width: 2px; background: var(--faint);
+  transform: translateX(-50%); z-index: 0;
+}
+.subflow .split > .col::after {           /* 가로 레일 (center-to-center) */
+  content: ""; position: absolute; left: -9px; right: -9px; top: -10px;
+  border-top: 2px solid var(--faint); z-index: 0;
+}
+.subflow .split > .col:first-child::after { left: 50%; }
+.subflow .split > .col:last-child::after  { right: 50%; }
+.subflow .split > .col::before {          /* 레일 → 각 가지 드롭 */
+  content: ""; position: absolute; left: 50%; top: -10px;
+  height: 10px; width: 2px; background: var(--faint);
+  transform: translateX(-50%); z-index: 0;
+}
 .node {
   display: block;
   width: 100%;
@@ -656,9 +709,9 @@ a.node.linked:hover .more { opacity: 1; }
   .guard > .exit::before, .guard > .exit::after { display: none; }   /* 가로 연결선 숨김 */
 }
 
-/* 루프 back-edge — 좌측 점선 브래킷 + 상단 화살촉
-   화살촉은 세로선(브래킷 좌변, center≈15px) 꼭대기에 정확히 캡으로 얹는다.
-   좌상단 radius 를 줄여 직선이 화살촉 밑변까지 닿게 한다(촉이 떠 보이던 문제). */
+/* 루프 back-edge — 좌측 점선 ㄷ([) 브래킷 + 화살촉
+   화살촉은 상단 가로 stub 의 우측 끝(브래킷이 본문으로 들어가는 지점)에 얹어
+   오른쪽(루프 본문 재진입 방향)을 향한다 — 촉이 선분 끝에 붙도록. */
 .loop.cycle { padding-left: 38px; }
 .loop.cycle::before {
   content: "";
@@ -674,11 +727,11 @@ a.node.linked:hover .more { opacity: 1; }
 .loop.cycle::after {
   content: "";
   position: absolute;
-  left: 10px;          /* tip center = 10 + 5 = 15 → 세로선 중심에 정렬 */
-  top: 12px;           /* 밑변(y=19)이 브래킷 top(18)에 flush → 세로선에 붙음 */
-  border-left: 5px solid transparent;
-  border-right: 5px solid transparent;
-  border-bottom: 7px solid var(--acc);
+  left: 19px;          /* tip(우측 꼭짓점)=19+7=26 → 상단 가로 stub 우측 끝 */
+  top: 14px;           /* tip center y=14+5=19 → 상단 stub(top:18, 2px) 중앙 */
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 7px solid var(--acc);   /* 오른쪽(루프 본문) 향함 */
 }
 .loop .back-lbl {
   position: absolute;

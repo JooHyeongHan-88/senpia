@@ -40,11 +40,11 @@
     </div>
     <div class="arrow"></div>
 
-    <div class="gate"><span class="q">◇ 같은 client_id 로 턴 진행 중? (R2)</span><small>_active_turn_clients: set[str] — uvicorn 단일 event loop, await 없이 원자적 check-add</small></div>
-    <div class="split">
-      <div class="col">
+    <!-- R2: 동시 턴 가드 — 예→exit right ■, 아니오→spine -->
+    <div class="guard">
+      <div class="gate"><span class="q">◇ 같은 client_id 로 턴 진행 중? (R2)</span><small>_active_turn_clients: set[str] — uvicorn 단일 event loop, await 없이 원자적 check-add</small></div>
+      <div class="exit right">
         <span class="edge-lbl no">예 — 이미 실행 중</span>
-        <div class="arrow short"></div>
         <div class="node cat-safe">
           <div class="node-cat">즉시 거부 (R2)</div>
           <div class="node-title">ErrorEvent + DoneEvent</div>
@@ -54,30 +54,27 @@
         <div class="arrow short"></div>
         <div class="term">■ 종료</div>
       </div>
-      <div class="col">
-        <span class="edge-lbl yes">아니오</span>
-        <div class="arrow short"></div>
-        <div class="node cat-core">
-          <div class="node-title">_active_turn_clients.add(client_id)</div>
-          <div class="mod">finally 에서 반드시 remove</div>
-        </div>
-        <div class="arrow short"></div>
-        <div class="node cat-core wide">
-          <div class="node-cat">Provider 선택</div>
-          <div class="node-title">get_provider(settings)</div>
-          <div class="mod">agent/providers/factory.py · 매 요청 SettingsStore.get() 재조회</div>
-          <div class="desc">서버 재시작 없이 provider/모델 hot-swap. mock·dtgpt·openai_compatible 분기.</div>
-        </div>
-        <div class="arrow short"></div>
-        <div class="node cat-core wide">
-          <div class="node-cat">하니스 위임</div>
-          <div class="node-title">harness.run_turn(...) → AsyncGenerator</div>
-          <div class="mod">agent/harness/loop.py</div>
-          <div class="desc">SSE 이벤트 generator 를 async for 로 소비해 클라이언트에 스트리밍. 상세 → 04 턴 루프.</div>
-        </div>
-      </div>
     </div>
-    <div class="merge">▽ 이벤트 스트림 합류 (정상 경로)</div>
+    <div class="arrow lbl" data-label="아니오"></div>
+
+    <div class="node cat-core">
+      <div class="node-title">_active_turn_clients.add(client_id)</div>
+      <div class="mod">finally 에서 반드시 remove</div>
+    </div>
+    <div class="arrow short"></div>
+    <div class="node cat-core wide">
+      <div class="node-cat">Provider 선택</div>
+      <div class="node-title">get_provider(settings)</div>
+      <div class="mod">agent/providers/factory.py · 매 요청 SettingsStore.get() 재조회</div>
+      <div class="desc">서버 재시작 없이 provider/모델 hot-swap. mock·dtgpt·openai_compatible 분기.</div>
+    </div>
+    <div class="arrow short"></div>
+    <div class="node cat-core wide">
+      <div class="node-cat">하니스 위임</div>
+      <div class="node-title">harness.run_turn(...) → AsyncGenerator</div>
+      <div class="mod">agent/harness/loop.py</div>
+      <div class="desc">SSE 이벤트 generator 를 async for 로 소비해 클라이언트에 스트리밍. 상세 → 04 턴 루프.</div>
+    </div>
     <div class="arrow"></div>
 
     <div class="node cat-api wide">
@@ -101,37 +98,38 @@
     </div>
     <div class="arrow"></div>
 
-    <div class="gate"><span class="q">◇ 스트림이 잘렸나? (F2)</span><small>finish_reason=="length" 또는 연결 종료</small></div>
-    <div class="split">
-      <div class="col">
+    <!-- F2: 잘림 → exit right ■, 정상 → spine → F3 -->
+    <div class="guard">
+      <div class="gate"><span class="q">◇ 스트림이 잘렸나? (F2)</span><small>finish_reason=="length" 또는 연결 종료</small></div>
+      <div class="exit right">
         <span class="edge-lbl yes">예 — 잘림</span>
-        <div class="arrow short"></div>
         <div class="node cat-safe">
           <div class="node-cat">잘림 대응 (F2)</div>
           <div class="node-title">tool_calls_buffer flush → DoneEvent ×1</div>
           <div class="mod">버퍼된 tool_call 항상 emit</div>
           <div class="desc">잘림이어도 버퍼된 tool_call 은 emit. DoneEvent 정확히 1회 보장 — harness 루프가 멈추지 않음.</div>
         </div>
+        <div class="arrow short"></div>
+        <div class="term">■ 종료</div>
+      </div>
+    </div>
+    <div class="arrow lbl" data-label="아니오 — 정상"></div>
+
+    <!-- F3: 인자 불완전 여부 (대칭 — 양쪽 다 이벤트 emit) -->
+    <div class="gate"><span class="q">◇ tool_call 인자 JSON 불완전? (F3)</span><small>스트리밍 잘림으로 파싱 실패</small></div>
+    <div class="split">
+      <div class="col">
+        <span class="edge-lbl yes">예</span>
+        <div class="arrow short"></div>
+        <div class="node cat-safe">
+          <div class="node-title">MALFORMED_TOOL_ARGS_KEY 에 원본 보존</div>
+          <div class="desc">{"__malformed_arguments__": "..."} — harness 에서 감지 → ToolResultEvent(is_error) self-correct 요구.</div>
+        </div>
       </div>
       <div class="col">
-        <span class="edge-lbl no">아니오 — 정상</span>
+        <span class="edge-lbl no">정상</span>
         <div class="arrow short"></div>
-        <div class="gate"><span class="q">◇ tool_call 인자 JSON 불완전? (F3)</span><small>스트리밍 잘림으로 파싱 실패</small></div>
-        <div class="split">
-          <div class="col">
-            <span class="edge-lbl yes">예</span>
-            <div class="arrow short"></div>
-            <div class="node cat-safe">
-              <div class="node-title">MALFORMED_TOOL_ARGS_KEY 에 원본 보존</div>
-              <div class="desc">{"__malformed_arguments__": "..."} — harness 에서 감지 → ToolResultEvent(is_error) self-correct 요구.</div>
-            </div>
-          </div>
-          <div class="col">
-            <span class="edge-lbl no">정상</span>
-            <div class="arrow short"></div>
-            <div class="node cat-core"><div class="node-title">정상 ToolCallEvent yield</div></div>
-          </div>
-        </div>
+        <div class="node cat-core"><div class="node-title">정상 ToolCallEvent yield</div></div>
       </div>
     </div>
   </div>
