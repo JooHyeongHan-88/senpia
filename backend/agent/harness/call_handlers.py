@@ -324,11 +324,13 @@ async def _handle_ask_user(
     question = (args.get("question") or "").strip()
     options = args.get("options")
     input_type = args.get("input_type", "both")
+    multi_select = bool(args.get("multi_select", False))
 
     # 정규화: options 가 비어 있으면 자유입력만, 비정상 input_type 은 both 로 폴백.
     if not options:
         options = None
         input_type = "text"
+        multi_select = False  # 옵션이 없으면 다중 선택 대상이 없다.
     elif input_type not in ("choice", "text", "both"):
         input_type = "both"
 
@@ -344,6 +346,7 @@ async def _handle_ask_user(
         options=options,
         tool_name=ASK_USER,
         input_type=input_type,
+        multi_select=multi_select,
     )
     outcome.interrupted = True
 

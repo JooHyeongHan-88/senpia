@@ -25,14 +25,37 @@
   let showOptions = $derived(
     (mode === "choice" || mode === "both") && askUser.options?.length > 0,
   );
+  // 다중 선택 모드 — 옵션이 실제로 표시될 때만 의미 있다.
+  let multi = $derived(!!askUser.multi_select && showOptions);
+
+  // 다중 선택 누적 상태 (Svelte 5: 재할당으로 반응성 트리거).
+  let selected = $state([]);
+  let canSubmit = $derived(multi && selected.length > 0 && !isDisabled);
 
   /**
-   * 옵션 버튼 클릭 핸들러.
+   * 단일 선택 — 클릭 즉시 전송.
    * @param {string} option
    */
   async function handleOption(option) {
     if (isDisabled) return;
     await sendMessage(option);
+  }
+
+  /**
+   * 다중 선택 토글 — 선택 목록에 추가/제거.
+   * @param {string} option
+   */
+  function toggleOption(option) {
+    if (isDisabled) return;
+    selected = selected.includes(option)
+      ? selected.filter((o) => o !== option)
+      : [...selected, option];
+  }
+
+  /** 다중 선택 확정 — 고른 항목을 한 메시지로 합쳐 전송. */
+  async function submitMulti() {
+    if (!canSubmit) return;
+    await sendMessage(selected.join(", "));
   }
 </script>
 
@@ -51,20 +74,50 @@
   {#if showOptions}
     <div class="options" role="group" aria-label="선택지">
       {#each askUser.options as option (option)}
-        <button
-          class="option-btn"
-          type="button"
-          disabled={isDisabled}
-          onclick={() => handleOption(option)}
-        >
-          {option}
-        </button>
+        {#if multi}
+          <button
+            class="option-btn"
+            class:selected={selected.includes(option)}
+            type="button"
+            aria-pressed={selected.includes(option)}
+            disabled={isDisabled}
+            onclick={() => toggleOption(option)}
+          >
+            {option}
+          </button>
+        {:else}
+          <button
+            class="option-btn"
+            type="button"
+            disabled={isDisabled}
+            onclick={() => handleOption(option)}
+          >
+            {option}
+          </button>
+        {/if}
       {/each}
     </div>
   {/if}
 
+  {#if multi && !askUser.answered}
+    <button
+      class="submit-btn"
+      type="button"
+      disabled={!canSubmit}
+      onclick={submitMulti}
+    >
+      선택 완료{selected.length > 0 ? ` (${selected.length})` : ""}
+    </button>
+  {/if}
+
   {#if !askUser.answered}
-    {#if mode === "both"}
+    {#if multi}
+      {#if mode === "both"}
+        <p class="hint">여러 개를 고른 뒤 선택 완료를 누르거나 직접 입력하세요</p>
+      {:else}
+        <p class="hint">여러 개를 고른 뒤 선택 완료를 누르세요</p>
+      {/if}
+    {:else if mode === "both"}
       <p class="hint">또는 아래 입력창에 직접 입력하세요</p>
     {:else if mode === "choice"}
       <p class="hint">위 선택지 중 하나를 골라주세요</p>
@@ -139,7 +192,42 @@
     border-color: color-mix(in srgb, var(--accent) 50%, transparent);
   }
 
+  /* ── 다중 선택 — 선택된 칩 강조 ── */
+  .option-btn.selected {
+    background: var(--accent);
+    color: var(--accent-fg);
+    border-color: var(--accent);
+  }
+
+  .option-btn.selected:hover:not(:disabled) {
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
+  }
+
   .option-btn:disabled {
+    cursor: default;
+    opacity: 0.5;
+  }
+
+  /* ── 다중 선택 확정 버튼 ── */
+  .submit-btn {
+    align-self: flex-start;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent-fg);
+    background: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-full);
+    padding: 5px 16px;
+    cursor: pointer;
+    transition: background var(--dur-fast);
+  }
+
+  .submit-btn:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
+
+  .submit-btn:disabled {
     cursor: default;
     opacity: 0.5;
   }

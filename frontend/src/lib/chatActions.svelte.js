@@ -480,6 +480,7 @@ export async function sendMessage(input) {
             tool_name: ev.tool_name ?? null,
             // 백엔드가 명시한 input_type 을 신뢰하되, 누락 시 options 유무로 폴백.
             input_type: ev.input_type ?? (ev.options ? "both" : "text"),
+            multi_select: ev.multi_select ?? false,
             answered: false,
           };
           ui.sessions = [...ui.sessions];

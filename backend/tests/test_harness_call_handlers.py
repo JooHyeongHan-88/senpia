@@ -400,6 +400,41 @@ async def test_ask_user_with_options_keeps_choice() -> None:
     ask = [e for e in events if isinstance(e, AskUserEvent)][0]
     assert ask.options == ["A", "B"]
     assert ask.input_type == "choice"
+    # 기본 단일 선택 — multi_select 미지정 시 False.
+    assert ask.multi_select is False
+
+
+async def test_ask_user_multi_select_with_options() -> None:
+    ctx = _make_ctx(state=AgentState())
+    call = ToolCall(
+        id="c",
+        name=ASK_USER,
+        arguments={
+            "question": "모두 골라",
+            "options": ["A", "B", "C"],
+            "input_type": "both",
+            "multi_select": True,
+        },
+    )
+    events = await _collect(_handle_ask_user(ctx, call, CallOutcome()))
+    ask = [e for e in events if isinstance(e, AskUserEvent)][0]
+    assert ask.options == ["A", "B", "C"]
+    assert ask.multi_select is True
+
+
+async def test_ask_user_multi_select_without_options_forced_false() -> None:
+    # 옵션이 없으면 다중 선택 대상이 없으므로 multi_select 는 False 로 강제된다.
+    ctx = _make_ctx(state=AgentState())
+    call = ToolCall(
+        id="c",
+        name=ASK_USER,
+        arguments={"question": "자유 입력?", "options": [], "multi_select": True},
+    )
+    events = await _collect(_handle_ask_user(ctx, call, CallOutcome()))
+    ask = [e for e in events if isinstance(e, AskUserEvent)][0]
+    assert ask.options is None
+    assert ask.input_type == "text"
+    assert ask.multi_select is False
 
 
 # ---------------------------------------------------------------------------

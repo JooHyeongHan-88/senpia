@@ -173,6 +173,9 @@ class AskUserEvent(BaseModel):
         Literal["choice", "text", "both"],
         "UI 모드 — choice: 옵션만, text: 자유입력만, both: 옵션+자유입력 (기본)",
     ] = "both"
+    multi_select: Annotated[
+        bool, "options 다중 선택 허용 — True 면 여러 개 고른 뒤 한 번에 제출"
+    ] = False
 
 
 class TodoUpdateEvent(BaseModel):
