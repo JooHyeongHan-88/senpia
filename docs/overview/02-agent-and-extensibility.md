@@ -100,7 +100,7 @@ priority: 5
 
 ### 현재 들어있는 파일은 Mock이다
 
-지금의 `SKILLS/`(time_check·data_summary·report_writer)·`AGENTS/`(analyst·writer)·
+지금의 `SKILLS/`(time_check·data_summary·report_writer·rank_review)·`AGENTS/`(analyst·writer)·
 `backend/scripts/`는 실제 LLM 없이 하니스와 UI를 검증하기 위한 **Mock 시나리오 전용**이다.
 운영 투입 시 실제 도메인의 SKILL/AGENT로 교체하거나 삭제한다.
 
@@ -160,6 +160,10 @@ priority: 5
 `open_curation`은 **evaluator에 특정되지 않는다** — `tool` 인자로 임의 확장을 가리키고
 `mapping`도 해석 없이 번들에 그대로 실어 보낸다(확장이 해석). 확장 진입 규약을 한 곳에 모은
 제네릭 호스트 훅이다.
+
+> 확장이 폴더 단위로 늘어난다는 격리 원칙의 실증으로, 현재 `extensions/`에는 evaluator 외에
+> **tracer**(`APP_DEBUG_TRACE` 가 기록한 dev 디버그 트레이스를 타임라인으로 보는 뷰어)가 함께
+> 들어 있다. 둘 다 같은 컨벤션을 따르며 host 코드 수정 없이 추가됐다.
 
 ### 예시 확장 — evaluator (parquet 큐레이션 BI)
 

@@ -304,6 +304,10 @@ iframe으로 임베드해 번들의 parquet들을 로드한다. 패널 헤더의
 → **AI 생성 → 사람 큐레이션 → 결과 환류**의 닫힌 루프가 완성된다. 사람의 선별 판단이
 에이전트에게 다시 읽혀 후속 작업(보고서 작성 등)으로 이어진다.
 
+> **확장 직접 열기**: `open_curation` 핸드오프 외에, TopBar 패널-열기 버튼 옆 caret 드롭다운
+> (`ExtensionMenu`)으로 UI가 있는 확장을 **소스 없이 랜딩 페이지로** 직접 열 수 있다. 현재
+> 카탈로그에는 evaluator와 **tracer**(dev 디버그 트레이스 타임라인 뷰어)가 노출된다.
+
 ---
 
 ## 12. LLM 설정 — SettingsModal & ModelPicker

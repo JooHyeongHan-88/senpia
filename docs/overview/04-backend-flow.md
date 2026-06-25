@@ -96,8 +96,8 @@ dev 모드에서 `build/web/`이 없으면 ⑤의 SPA 서빙과 ⑥이 생략된
 
 이외 정적 mount: `/` (SPA) · `/assets` · `/result` (산출물) · `/workspace` (도구 생성 파일).
 
-> **확장 라우트**: `extensions/`의 각 도구는 `/api/ext/<tool>/*`(API)와 `/ext/<tool>`(SPA)로
-> 자동 마운트된다 — 호스트 코드 등록 없이 컨벤션으로 발견 (15절).
+> **확장 라우트**: `extensions/`의 각 도구(evaluator·tracer 등)는 `/api/ext/<tool>/*`(API)와
+> `/ext/<tool>`(SPA)로 자동 마운트된다 — 호스트 코드 등록 없이 컨벤션으로 발견 (15절).
 
 ---
 
@@ -110,7 +110,9 @@ dev 모드에서 `build/web/`이 없으면 ⑤의 SPA 서빙과 ⑥이 생략된
 | `config.py` | **모든 경로·포트의 단일 진실 공급원.** frozen/dev 분기(`_project_root`), presence 상수, `.env` 로드. 포트 바인딩은 `core.server_socket`이 담당 |
 | `browser.py` | presence 연결 카운트(스레드 안전), watchdog, 브라우저 자동 오픈, 서버 종료 제어 |
 | `result_store.py` | 산출물 폴더 슬롯 발급(`result/<세션>/<시각>/`), 경로 해석·containment 검증(`resolve_result_path`), 세션 manifest |
-| `updater.py` | latest.json 확인(캐시·검증) → 다운로드 → sha256 → 스테이징 → Updater.exe 기동 |
+| `updater.py` | GHE Releases 메타 확인(REST API·캐시·검증) → 에셋 다운로드(octet-stream+PAT) → sha256 → 스테이징 → Updater.exe 기동 |
+| `content_sync.py` | frozen 기동 시 SKILLS/AGENTS/PROMPTS를 채널 매핑 브랜치(qa→dev, prod→main)에서 증분 동기화 (실패 시 번들 폴백) |
+| `github_api.py` | updater·content_sync 공용 — GHE 인증 헤더·TLS 검증(`SSL_VERIFY`) 단일 지점 |
 
 ### `backend/api/` — HTTP 경계
 
@@ -480,6 +482,7 @@ result/
 
 메인 앱과 분리된 독립 도구(Svelte SPA + FastAPI 라우터)를 폴더 단위로 붙이는 서브시스템.
 호스트는 개별 도구를 모르고 **컨벤션**만 따른다 (개념·격리 보장은 [② 에이전트·확장성](02-agent-and-extensibility.md)).
+현재 `evaluator`(parquet 큐레이션)·`tracer`(dev 디버그 트레이스 뷰어)가 같은 컨벤션으로 들어 있다.
 
 ### 로더 — 컨벤션 기반 자동 발견 (`core/extensions_loader.py`)
 

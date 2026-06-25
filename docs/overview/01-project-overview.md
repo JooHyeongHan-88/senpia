@@ -14,7 +14,7 @@
 | **Svelte SPA** | 사용자가 보는 채팅 UI (정적 빌드 산출물) |
 | **FastAPI** | 정적 파일 서빙 + REST/SSE API + LLM 에이전트 하니스 |
 | **PyInstaller** | 위 둘 + 에이전트 정의 파일을 묶어 단일 EXE로 패키징 |
-| **Nexus (사내 저장소)** | EXE와 버전 메타데이터(`latest.json`) 배포 |
+| **GitHub Enterprise Releases** | EXE와 버전 메타데이터(`latest.json`)를 릴리즈 에셋으로 배포 |
 | **Updater.exe** | 실행 중인 앱을 새 버전으로 자가 교체 (자동 업데이트) |
 
 핵심 컨셉: **브라우저가 화면이고, EXE가 서버다.** 사용자는 EXE를 더블클릭하기만 하면
@@ -43,20 +43,22 @@
 ```
 ① 개발      frontend/ (Svelte SPA)  +  backend/ (FastAPI + Agent)  +  PROMPTS·SKILLS·AGENTS (.md)
                │
-② 빌드      pwsh packaging/release.ps1   ← 한 줄로 전체 파이프라인 실행
+② 빌드      pwsh packaging/release.ps1 -Channel <qa|prod>   ← 채널 필수, 한 줄로 전체 파이프라인 실행
                ├─ npm run build   →  build/web/              (정적 웹 자산)
+               ├─ npm run build   →  extensions/*/dist       (확장 SPA)
                ├─ PyInstaller     →  build/updater/Updater.exe
-               └─ PyInstaller     →  release/MyAgent.exe     (web·updater·md·.env 전부 내장)
+               └─ PyInstaller     →  release/MyAgent.exe     (web·updater·확장·md·.env 전부 내장)
                │
-③ 배포      release/MyAgent.exe  +  release/latest.json  →  Nexus 업로드
+③ 배포      release/MyAgent.exe  +  release/latest.json  →  gh release create (GitHub Enterprise)
                │
 ④ 실행      사용자가 EXE 더블클릭  →  FastAPI 기동(고정 포트)  →  기본 브라우저 자동 오픈
                │
-⑤ 업데이트   앱이 Nexus의 latest.json 확인  →  새 EXE 다운로드·검증  →  Updater.exe가 자가 교체
+⑤ 업데이트   앱이 GHE Releases 메타 확인  →  새 EXE 다운로드·sha256 검증  →  Updater.exe가 자가 교체
 ```
 
 - **`build/`** = 중간 산출물 (EXE 안에 들어갈 재료, 업로드하지 않음)
-- **`release/`** = 최종 산출물 (Nexus에 업로드되는 것)
+- **`release/`** = 최종 산출물 (GitHub Release 에셋으로 업로드되는 것)
+- **채널**: `qa`(Mock 노출·업데이트 차단·`--prerelease`) / `prod`(운영 릴리즈) — [⑤ 빌드 & 업데이트](05-build-and-update.md) 참조
 
 ---
 
@@ -108,7 +110,7 @@
 | LLM 연동 | OpenAI 호환 API (DTGPT 포함) + Mock | provider 추상화로 핫스왑 |
 | 데이터 | **polars** + parquet | 에이전트 산출물의 표준 데이터 포맷 |
 | 패키징 | **PyInstaller** (onefile) | Windows 단일 EXE |
-| 배포 | **Nexus** raw repository | 저장소 중립적 설계 (`APP_REPO_*` 변수) |
+| 배포 | **GitHub Enterprise Releases** | `APP_REPO_BASE_URL` REST API + 읽기 PAT, `gh release create` 게시 |
 | 패키지 관리 | Python `uv` / JS `npm` | |
 | 품질 | `ruff` (포맷+린트) / `pytest` (asyncio auto) | |
 
@@ -165,7 +167,8 @@ svelte-fastapi-exe/
 ├─ AGENTS/              # 서브 에이전트 정의 (.md) — 위임 대상 카탈로그
 │
 ├─ extensions/          # 메인 앱과 격리된 독립 확장 도구 (폴더 단위 추가·삭제)
-│   └─ evaluator/       #    예시: parquet 큐레이션 BI 도구 (Svelte SPA + FastAPI 라우터)
+│   ├─ evaluator/       #    예시: parquet 큐레이션 BI 도구 (Svelte SPA + FastAPI 라우터)
+│   └─ tracer/          #    예시: dev 디버그 트레이스 타임라인 뷰어 (APP_DEBUG_TRACE)
 │
 ├─ packaging/           # App.spec · Updater.spec · release.ps1 (빌드 파이프라인)
 ├─ updater/             # Updater.exe 소스 (자가 교체 로직)
@@ -213,8 +216,8 @@ cd frontend; npm run dev           # 터미널 2 — http://localhost:5173
 에이전트     : 하니스 루프    (LLM provider ↔ 등록된 도구 실행, plan 기반)
 확장        : PROMPTS/SKILLS/AGENTS 마크다운 + @register_tool + .env 한 줄
 확장 도구    : extensions/ 폴더 단위 독립 도구 (격리·open_curation 핸드오프)
-빌드        : release.ps1 → PyInstaller onefile EXE + latest.json
-배포        : Nexus 업로드 → 앱이 스스로 확인·다운로드·sha256 검증·자가 교체
+빌드        : release.ps1 -Channel qa|prod → PyInstaller onefile EXE + latest.json
+배포        : GitHub Release 게시 → 앱이 스스로 확인·다운로드·sha256 검증·자가 교체
 ```
 
 **다음 문서**: [② 에이전트·확장성](02-agent-and-extensibility.md) — 에이전트 행동 정의와 독립 확장 도구
