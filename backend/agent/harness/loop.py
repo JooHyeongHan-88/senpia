@@ -164,7 +164,12 @@ async def run_turn(
 
     try:
         if force_skills:
-            skills = skill_registry.get_by_names(force_skills)
+            # force(=유저 슬래시)는 유저 표면이므로 expose=False 비공개 SKILL 을 거부한다.
+            # get_by_names 자체는 그대로 둔다 — activate_skill·R9 carry 가 비공개 SKILL 을
+            # 정당하게 해석해야 하므로 차단은 이 force 경계에서만 한다.
+            skills = [
+                s for s in skill_registry.get_by_names(force_skills) if s.meta.expose
+            ]
         else:
             skills = skill_registry.select(
                 user_message, available_tools=registry.names()

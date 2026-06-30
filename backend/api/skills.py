@@ -22,7 +22,7 @@ async def list_skills() -> list[dict]:
             "trigger": meta.trigger,
             "priority": meta.priority,
         }
-        for meta in skill_registry.list_meta()
+        for meta in skill_registry.list_meta(exposed_only=True)
     ]
 
 

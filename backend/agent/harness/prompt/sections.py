@@ -16,7 +16,9 @@ def _render_inactive_skill_catalog(
         return None
     active_names = {s.meta.name for s in skills}
     inactive_metas = [
-        m for m in skill_registry.list_meta() if m.name not in active_names
+        m
+        for m in skill_registry.list_meta(exposed_only=True)
+        if m.name not in active_names
     ]
     if not inactive_metas:
         return None

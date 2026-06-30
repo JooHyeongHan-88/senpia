@@ -67,6 +67,11 @@ class SkillMeta(BaseModel):
         "introspect 로 시그니처·docstring 을 system prompt 에 자동 주입하고, "
         "infrastructure tools(call_function/eval_expression/...)을 자동 노출한다.",
     ] = Field(default_factory=list)
+    expose: Annotated[
+        bool,
+        "False면 유저 비노출 — 슬래시·trigger·이름매칭 전부 차단. 부모 SKILL 본문/"
+        "에이전트가 activate_skill 로만 켜는 비공개 SKILL.",
+    ] = True
 
 
 class Skill(BaseModel):
@@ -121,13 +126,22 @@ class SkillRegistry:
         self._skills = loaded
         logger.info("skills loaded: %d from %s", len(loaded), self._dir)
 
-    def list_meta(self) -> list[SkillMeta]:
-        """등록된 모든 skill 의 메타데이터 — 슬래시 커맨드 autocomplete 용.
+    def list_meta(self, exposed_only: bool = False) -> list[SkillMeta]:
+        """등록된 skill 의 메타데이터 — 슬래시 커맨드 autocomplete·카탈로그용.
 
         body 는 포함하지 않는다 (lazy load 정책 유지). 외부 직접 접근을 막기 위한
         얇은 read-only 헬퍼.
+
+        Args:
+            exposed_only: True 면 expose=False 인 비공개 SKILL 을 제외한다 — 유저 노출
+                표면(/api/skills · 비활성 카탈로그) 전용. 기본 False 는 전체 열거로,
+                부팅 cross_check 등 내부 용도가 비공개 SKILL 까지 보게 한다.
+
+        Returns:
+            list[SkillMeta]: 조건에 맞는 skill 메타데이터 목록.
         """
-        return [s.meta for s in self._skills]
+        metas = [s.meta for s in self._skills]
+        return [m for m in metas if m.expose] if exposed_only else metas
 
     def get_by_names(self, names: list[str]) -> list[Skill]:
         """이름 정확 일치로 skill 들을 조회한다 — 슬래시 커맨드 강제 활성화 경로.
@@ -175,6 +189,10 @@ class SkillRegistry:
         lowered = user_message.lower()
         scored: list[tuple[int, int, Skill]] = []
         for s in self._skills:
+            # expose=False 인 비공개 SKILL 은 유저 도달(trigger·이름매칭)을 차단한다 —
+            # activate_skill 등 프로그램 경로(get_by_names)로만 활성화된다.
+            if not s.meta.expose:
+                continue
             # trigger 키워드 매칭 (우선)
             hits = sum(1 for kw in s.meta.trigger if _keyword_hit(kw, lowered))
             # trigger 매칭 없으면 skill 이름 자체를 fallback 으로 검사
