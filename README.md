@@ -26,7 +26,7 @@ Vite/Svelte로 만든 AI Agent 채팅 UI를 FastAPI가 서빙하고, PyInstaller
 ## 프로젝트 구조
 
 ```
-svelte-fastapi-exe/
+senpia/
 ├── .env                   # 전체 환경 변수 레퍼런스 (dev only) — SSOT for APP_NAME, 저장소 설정
 ├── PROMPTS/               # base.md + safety.md + orchestrator.md — system prompt 합성
 ├── SKILLS/                # 작업별 가이드 (Front Matter trigger 라우팅, lazy load)

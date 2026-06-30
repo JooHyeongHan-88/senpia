@@ -147,7 +147,7 @@
 ## 7. 디렉터리 구조
 
 ```
-svelte-fastapi-exe/
+senpia/
 ├─ frontend/            # ① 화면 층 — Svelte 5 + Vite SPA
 │   └─ src/
 │       ├─ components/  #    UI 컴포넌트 약 30개 (ChatArea·ArtifactPanel·SettingsModal …)
