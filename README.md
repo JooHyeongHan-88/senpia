@@ -1,7 +1,8 @@
-# Svelte + FastAPI EXE
+# SENPIA
 
-Vite/Svelte로 만든 AI Agent 채팅 UI를 FastAPI가 서빙하고, PyInstaller로 단일 `.exe`로 패키징하는 사내 배포용 데스크톱 앱 템플릿.
-다중 대화 세션(localStorage 영속화) · LLM 설정 UI · Nexus raw repository 자동 업그레이드 내장.
+Data-Curation-In-The-Loop 지향 AI Agent tool.
+Vite/Svelte로 만든 AI Agent 채팅 UI를 FastAPI가 서빙하고, PyInstaller로 단일 `.exe`로 패키징하는 사내 배포용 데스크톱 앱.
+다중 대화 세션(localStorage 영속화) · LLM 설정 UI · Data Curation Extension 아키텍쳐 · Repository 자동 업그레이드 내장
 
 > **이 프로젝트는 코드를 작성하는 AI 도구가 아니다.**
 > 미리 갖추어진 Python API를 plan에 따라 실행하는 **API 실행 Agent 플랫폼**이다.
