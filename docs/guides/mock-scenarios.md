@@ -34,7 +34,7 @@ EXE 모드: 설정 UI 에서 Provider 드롭다운을 `mock` 으로 변경.
 |---|---|---|---|
 | **A** | (그 외 모든 입력) | — | DeltaEvent, MessageBubble markdown |
 | **B** | `추천해줘`, `골라줘`, `help me decide` | — (오케스트레이터 직접) | `ReasoningBlock`, `AskUserCard(input_type=both)` |
-| **C** | `지금 시간`, `현재 시각`, `몇 시야`, `what time` | 직접 실행 (소속 에이전트 없는 standalone SKILL) | `SkillBadge`, `ArtifactMarkdown` |
+| **C** | `지금 시간`, `현재 시각`, `몇 시야`, `what time` | 직접 실행 (소속 에이전트 없는 standalone SKILL) | `SkillBadge`(time_check + `activate_skill` 로 켜지는 비공개 의존 SKILL `_time_log_render`), `ArtifactMarkdown` |
 | **D** | `데이터 요약`, `요약 통계`, `summary stats` | Case 3 (data_summary → analyst_agent) | `AgentTrail`, `AgentProgress`, sub 내 `TodoProgress(3)`, sub 내 `ReasoningBlock`, `ArtifactChart`(차트 6개 그리드 — 그룹 scatter/ecdf 로 레전드 컨트롤), `SkillCompleteBadge` |
 | **E** | `전체 분석 보고서`, `종합 보고서` | Case 3 × 2단 체이닝 | 오케스트레이터 `TodoProgress(2)`, `AgentTrail` 칩 2개, sub 내 위젯들, `ArtifactChart`(차트 7개 페이지네이션) + `ArtifactMarkdown` + `ArtifactImage`(이미지 10장 갤러리) |
 | **F** | `병렬 분석`, `동시 분석`, `parallel` | `call_sub_agents_parallel`(analyst ∥ writer 동시) | `AgentTrail` 칩 2개가 **동시에** running → 인터리브 진행, dispatch_id 라우팅, 단일 통합 tool_result → 최종 통합 보고 |
@@ -62,10 +62,18 @@ EXE 모드: 설정 UI 에서 Provider 드롭다운을 `mock` 으로 변경.
 
 ```
 턴 1  → ToolCallEvent(now)
-턴 2  → ToolCallEvent(save_artifact, time_log.md)
+턴 2  → ToolCallEvent(activate_skill, name="_time_log_render")   ← 비공개 의존 SKILL 활성화
+턴 3  → ToolCallEvent(save_artifact, time_log.md)
         ToolCallEvent(display_markdown, source=result/<session>/<ts>/time_log.md)
-턴 3  → DeltaEvent — "현재 시각은 ... 입니다" 자연어 응답
+턴 4  → DeltaEvent — "현재 시각은 ... 입니다" 자연어 응답
 ```
+
+`time_check` SKILL 본문의 "시각 로그 저장 및 렌더링" 단계는 `activate_skill('_time_log_render')` 로
+비공개(`expose: false`) 의존 SKILL `_time_log_render` 를 켜서 위임한다. 이 의존 SKILL은 슬래시 메뉴·
+trigger·이름 매칭으로는 도달할 수 없고 오직 `activate_skill` 로만 켜진다. activate_skill 은 harness 의
+sentinel 분기(`_handle_activate_skill`)가 처리해 system prompt 를 동적 재조립하고 두 번째
+`SkillActiveEvent`(=`_time_log_render` SkillBadge)를 발화한다 — 본문에서 다른 SKILL 을 호출할 때는
+서술이 아니라 **도구 이름·인자를 리터럴로 명시**해야 비공개 SKILL 이 결정론적으로 켜진다는 패턴의 시연.
 
 ### D. data_summary via analyst_agent (Case 3 단일 위임)
 
@@ -314,7 +322,6 @@ result/
 
 다음은 의도적으로 5개 시나리오에서 제외했다. 필요 시 별도 시나리오로 확장 가능:
 
-- `activate_skill` sentinel 도구 분기
 - 도구 실행 실패 (`is_error=True`) — RCA 유도 메시지 흐름
 - `AskUserCard` 의 `input_type=text` / `input_type=choice` 단독 모드 (B 는 both 만)
 - loop-guard / depth-guard 차단 흐름

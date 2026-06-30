@@ -16,8 +16,9 @@ AgentSwitch / AgentReturn / SkillActive / SkillComplete / ToolResult 등 UI 이�
         다중 변형 trigger="여러개 골라줘", "모두 선택", "복수 선택" → AskUserCard(multi_select)
 
     C. time_check SKILL (standalone) trigger="지금 시간", "현재 시각", "몇 시야"
-        검증: SkillBadge(time_check) · now → save_artifact +
-              display_markdown → 자연어 응답 (Artifact 패널 markdown 탭)
+        검증: SkillBadge(time_check) · now → activate_skill(_time_log_render) +
+              SkillBadge(_time_log_render) → save_artifact + display_markdown →
+              자연어 응답 (Artifact 패널 markdown 탭)
 
     D. data_summary via analyst_agent (Case 3 단일 위임)
                                      trigger="데이터 요약", "요약 통계"
@@ -338,6 +339,7 @@ async def _scenario_B_after_answer(
 # =============================================================================
 
 _C_NOW_PREFIX = "mock-C-now-"
+_C_ACT_PREFIX = "mock-C-act-"
 _C_SAVE_PREFIX = "mock-C-save-"
 _C_MD_PREFIX = "mock-C-md-"
 
@@ -352,8 +354,9 @@ def _is_C_active(messages: list[Message], last_user: Message | None) -> bool:
 async def _scenario_C_time_check(
     messages: list[Message],
 ) -> AsyncIterator[StreamEvent]:
-    """3 턴 흐름: now → save_artifact+display_markdown → 자연어 응답."""
+    """4 턴 흐름: now → activate_skill(의존 SKILL) → save_artifact+display_markdown → 자연어 응답."""
     has_now = _has_recent_tool_result(messages, _C_NOW_PREFIX)
+    has_act = _has_recent_tool_result(messages, _C_ACT_PREFIX)
     has_md = _has_recent_tool_result(messages, _C_MD_PREFIX)
 
     # 턴 1: now 호출.
@@ -368,7 +371,19 @@ async def _scenario_C_time_check(
         yield DoneEvent()
         return
 
-    # 턴 2: save_artifact + display_markdown 동시.
+    # 턴 2: 저장·렌더링 단계를 비공개 의존 SKILL(_time_log_render)로 위임 — activate_skill 데모.
+    if not has_act:
+        yield ToolCallEvent(
+            call=ToolCall(
+                id=f"{_C_ACT_PREFIX}{uuid.uuid4().hex[:8]}",
+                name="activate_skill",
+                arguments={"name": "_time_log_render"},
+            )
+        )
+        yield DoneEvent()
+        return
+
+    # 턴 3: save_artifact + display_markdown 동시 (활성화된 _time_log_render 절차 수행).
     if not has_md:
         now_text = _latest_tool_content(messages, _C_NOW_PREFIX) or "(시각 정보 없음)"
         log_content = (
@@ -401,7 +416,7 @@ async def _scenario_C_time_check(
         yield DoneEvent()
         return
 
-    # 턴 3: 자연어 최종 응답.
+    # 턴 4: 자연어 최종 응답.
     now_text = _latest_tool_content(messages, _C_NOW_PREFIX) or "(알 수 없음)"
     reply = (
         f"현재 시각은 **{now_text}** 입니다.\n\n"
