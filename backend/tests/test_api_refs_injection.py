@@ -20,12 +20,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import agent.tools  # noqa: F401, E402 — register_tool 부수효과
 from agent.harness import (  # noqa: E402
+    _build_orchestrator_specs,
     _compose_orchestrator_system_prompt,
     _compose_sub_agent_system_prompt,
     _filter_specs_for_sub_agent,
     _inject_runtime_tools,
 )
-from agent.harness.loop import _build_orchestrator_specs  # noqa: E402
 from agent.models import AgentState, ToolSpec  # noqa: E402
 from agent.registries.agents import Agent, AgentMeta, AgentRegistry  # noqa: E402
 from agent.registries.skills import Skill, SkillMeta  # noqa: E402

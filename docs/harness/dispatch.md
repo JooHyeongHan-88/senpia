@@ -7,7 +7,7 @@
 |---|---|
 | `sequential.py` | `_dispatch_sub_agent` — 위임 1건을 격리 컨텍스트에서 순차 실행 |
 | `parallel.py` | `_dispatch_parallel_sub_agents` — 독립 작업들을 동시 실행·fan-in |
-| `spec_filter.py` | `_filter_specs_for_sub_agent` — 서브에 노출할 도구 스펙 선별 + 런타임 도구 주입 |
+| `spec_filter.py` | `_build_orchestrator_specs`(오케스트레이터) · `_filter_specs_for_sub_agent`(서브) — provider 노출 도구 스펙 선별 + 런타임 도구 주입 |
 | `result_format.py` | `_format_sub_agent_result`·`_extract_task_summary` — 결과를 오케스트레이터 컨텍스트용 텍스트로 |
 
 > **상호재귀 경계**: `loop._run_agent_turn` ↔ `dispatch.sequential._dispatch_sub_agent` 는
@@ -99,6 +99,12 @@ _dispatch_parallel_sub_agents(call, ..., max_parallel, result_holder)
 
 보조: `_skills_require_runtime_tools`(활성 SKILL 중 api_refs 보유 여부) ·
 `_inject_runtime_tools`(specs 에 없는 인프라 도구 추가) · `_resolve_agent_skills`(agent.meta.skills lazy load).
+
+> **오케스트레이터 짝** `_build_orchestrator_specs(registry, skills, *, has_agents)` 도 같은
+> 모듈에 있다. `run_turn` 이 호출해 오케스트레이터 provider 에 노출할 스펙을 고른다 —
+> `COMPLETE_SUB_AGENT`(서브 전용)는 숨기고, AGENTS 가 없으면 위임 도구도 제거한 뒤, 활성
+> SKILL 에 api_refs 가 있으면 `_inject_runtime_tools` 로 인프라 도구를 보강한다. 서브용
+> 필터와 오케스트레이터용 빌더가 한 모듈에 모여 "도구 스펙 선별" 책임을 완성한다.
 
 ---
 

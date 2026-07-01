@@ -20,10 +20,12 @@ run_turn 한 번 = 사용자 입력 1건에 대한 응답 1턴.
     - 마지막에 DoneEvent yield, 예외는 ErrorEvent 로 변환
     - 서브 에이전트의 상세 메시지는 ConversationStore 에 영속화하지 않음 (컨텍스트 격리)
 
-세부 책임은 같은 패키지의 형제 모듈로 분리됨 — system prompt 조립(``prompt``),
-상태 변형·히스토리·루프가드(``state``), 디스패치(``dispatch``), 도구 실행(``tool_exec``),
-호출 예산(``budget``), tool_call 단건 처리(``call_handlers``), 루프 상수(``constants``).
-본 모듈은 그 조각들을 엮는 루프 골격만 보유한다.
+세부 책임은 같은 패키지의 형제 모듈로 분리됨 — system prompt 조립(``prompt`` —
+composer 클로저 포함), 상태 변형·히스토리·루프가드·실패 턴 영속(``state``),
+서브 에이전트 위임·도구 스펙 선별(``dispatch``), 도구 실행(``tool_exec``),
+호출 예산(``budget``), tool_call 단건 처리(``call_handlers``), 루프 생애주기
+헬퍼(wind-down·fallback, ``lifecycle``), 히스토리 압축(``compaction``),
+루프 상수(``constants``). 본 모듈은 그 조각들을 엮는 루프 골격만 보유한다.
 """
 
 import logging
@@ -45,12 +47,7 @@ from agent.config import COMPACTION_ENABLED, OBJECTIVE_MAX_CHARS
 from agent.registries.agents import AgentRegistry
 from agent.registries.prompts import PromptRegistry
 from agent.registries.skills import Skill, SkillRegistry
-from agent.registries.tools import (
-    COMPLETE_SUB_AGENT,
-    SUB_AGENT_DISPATCH,
-    SUB_AGENTS_PARALLEL_DISPATCH,
-    ToolRegistry,
-)
+from agent.registries.tools import ToolRegistry
 from agent.providers.factory import LLMProvider
 from agent.stores.agent_state import AgentStateStore
 from agent.stores.conversation import ConversationStore
@@ -62,26 +59,18 @@ from agent.harness.call_handlers import (
     TurnContext,
     _handle_tool_call,
 )
-from agent.harness.constants import (
-    MAX_ITERATIONS_FALLBACK_INSTRUCTION,
-    ORCHESTRATOR_ID,
-    WIND_DOWN_REMAINING_CALLS,
+from agent.harness.compaction import _compact_history
+from agent.harness.constants import ORCHESTRATOR_ID
+from agent.harness.dispatch.spec_filter import _build_orchestrator_specs
+from agent.harness.lifecycle import (
+    _emit_max_iterations_fallback,
+    _maybe_inject_wind_down,
 )
-from agent.harness.dispatch.spec_filter import (
-    _inject_runtime_tools,
-    _skills_require_runtime_tools,
-)
-from agent.harness.prompt.compose import (
-    _compose_orchestrator_system_prompt,
-    _compose_system_prompt,
-)
-from agent.harness.prompt.wind_down import _build_wind_down_message
-from agent.harness.state.balancing import (
-    _balance_all_unresolved,
-    _balance_unresolved_tool_calls,
-)
+from agent.harness.prompt.compose import _make_system_prompt_composer
+from agent.harness.state.balancing import _balance_unresolved_tool_calls
 from agent.harness.state.pending import clear_all_pending, has_pending
-from agent.harness.state.todo import _TERMINAL_STATUSES, _all_todos_terminal
+from agent.harness.state.persistence import _persist_failed_turn
+from agent.harness.state.todo import _TERMINAL_STATUSES
 
 logger = logging.getLogger(__name__)
 
@@ -294,118 +283,6 @@ async def run_turn(
 
 
 # ---------------------------------------------------------------------------
-# run_turn 준비 헬퍼 — prompt 조립 클로저 · 도구 스펙 선별 · 실패 턴 영속
-# ---------------------------------------------------------------------------
-
-
-def _make_system_prompt_composer(
-    *,
-    has_agents: bool,
-    prompt_registry: PromptRegistry,
-    agent_registry: AgentRegistry | None,
-    skill_registry: SkillRegistry,
-    state: AgentState,
-    user_prompt_section: str,
-    baseline_api_refs: list[str] | None = None,
-) -> Callable[[list[Skill]], str]:
-    """activate_skill 시 system prompt 를 동적 재조립하는 클로저를 만든다.
-
-    base prompt 와 state 는 이번 턴 시점 확정값이라 클로저에 캡처해도 안전하다.
-    has_agents 면 오케스트레이터(AGENTS 카탈로그 포함) prompt, 아니면 하위호환
-    단층 prompt(orchestrator.md 제외)를 합성한다.
-
-    Args:
-        has_agents: AGENTS 카탈로그 보유 여부 — 오케스트레이터/단층 분기.
-        user_prompt_section: SettingsModal 사용자 지침 (base 뒤에 덧붙음, 빈 문자열 가능).
-        baseline_api_refs: 오케스트레이터 baseline api_refs — 두 경로 모두에 전달돼
-            활성 SKILL 과 무관하게 라이브러리 API 섹션을 상시 노출한다.
-
-    Returns:
-        활성 SKILL 목록을 받아 완성된 system prompt 문자열을 돌려주는 클로저.
-    """
-    refs = baseline_api_refs or []
-    if has_agents:
-        base = prompt_registry.compose(include_orchestrator=True) + user_prompt_section
-
-        def recompose(updated_skills: list[Skill]) -> str:
-            return _compose_orchestrator_system_prompt(
-                base=base,
-                skills=updated_skills,
-                state=state,
-                agent_registry=agent_registry,  # type: ignore[arg-type]
-                skill_registry=skill_registry,
-                baseline_api_refs=refs,
-            )
-    else:
-        base = prompt_registry.compose(include_orchestrator=False) + user_prompt_section
-
-        def recompose(updated_skills: list[Skill]) -> str:
-            return _compose_system_prompt(
-                base,
-                updated_skills,
-                state,
-                skill_registry,
-                baseline_api_refs=refs,
-            )
-
-    return recompose
-
-
-def _build_orchestrator_specs(
-    registry: ToolRegistry, skills: list[Skill], *, has_agents: bool
-) -> list[ToolSpec]:
-    """오케스트레이터 provider 에 노출할 도구 스펙을 선별한다.
-
-    COMPLETE_SUB_AGENT 는 서브 에이전트 전용이라 숨기고, AGENTS 가 없으면 위임
-    도구(순차·병렬)도 제거한다. infrastructure 메타 도구(call_function 등)는
-    registry.specs() 에 항상 포함되므로 오케스트레이터에는 이미 노출돼 있다 —
-    `_inject_runtime_tools` 는 누락분 보강용 idempotent 안전망이다(서브 에이전트는
-    화이트리스트로 걸러지므로 거기서 실효). 따라서 오케스트레이터에서 baseline
-    api_refs 가 추가로 필요로 하는 것은 도구가 아니라 prompt 의 docstring 섹션뿐이다
-    (compose 가 담당). 도구 노출은 손대지 않는다.
-    """
-    delegation_tools = {SUB_AGENT_DISPATCH, SUB_AGENTS_PARALLEL_DISPATCH}
-    specs = [
-        s
-        for s in registry.specs()
-        if s.name != COMPLETE_SUB_AGENT
-        and (has_agents or s.name not in delegation_tools)
-    ]
-    if _skills_require_runtime_tools(skills):
-        specs = _inject_runtime_tools(specs, registry)
-    return specs
-
-
-def _persist_failed_turn(
-    *,
-    client_id: str,
-    turn_messages: list[Message],
-    state: AgentState,
-    store: ConversationStore,
-    state_store: AgentStateStore,
-    turn_persisted: bool,
-) -> None:
-    """run_turn 예외 경로의 best-effort 영속 (R1).
-
-    실패한 턴도 영속한다 — 사용자 메시지까지 증발하면 다음 턴 LLM 컨텍스트가
-    끊긴다. 미해결 tool_call 쌍은 영속 전에 보정(OpenAI 400 방지)하고, mid-mutation
-    pending 은 F11 과 동일하게 클리어한다. 영속 실패가 호출부의 에러 알림
-    (ErrorEvent/DoneEvent)을 막으면 안 되므로 모든 예외를 내부에서 삼킨다.
-
-    Args:
-        turn_persisted: 성공 경로 append 가 이미 끝났으면 True — 중복 영속 방지.
-    """
-    try:
-        clear_all_pending(state)
-        if not turn_persisted:
-            _balance_all_unresolved(turn_messages)
-            store.append(client_id, *turn_messages)
-        state_store.set(client_id, state)
-    except Exception:  # noqa: BLE001 — 영속은 best-effort, 이중 실패는 로그만
-        logger.exception("run_turn 실패 턴 영속 중 추가 오류 (best-effort 포기)")
-
-
-# ---------------------------------------------------------------------------
 # 공통 turn 루프 — 오케스트레이터 / 서브 에이전트 공용
 # ---------------------------------------------------------------------------
 
@@ -559,148 +436,3 @@ async def _run_agent_turn(
     else:
         async for ev in _emit_max_iterations_fallback(ctx):
             yield ev
-
-
-# ---------------------------------------------------------------------------
-# 루프 생애주기 헬퍼 — wind-down 주입 + max_iterations fallback
-# ---------------------------------------------------------------------------
-
-_COMPACTION_SYSTEM_PROMPT: str = (
-    "당신은 대화 압축기다. 아래 '기존 요약'에 '새로 잘린 대화'를 통합해 갱신된 진행 "
-    "요약 하나를 만들어라. 원래 목표·내려진 결정·제약 조건·핵심 수치 결과·산출물 "
-    "경로(result/...)를 반드시 보존하라. 한국어 200단어 이내로 간결하게, 요약 본문만 출력하라."
-)
-_COMPACTION_MAX_CHARS: int = 2000
-
-
-async def _compact_history(
-    provider: LLMProvider, prior_summary: str | None, dropped: list[Message]
-) -> str | None:
-    """슬라이딩 윈도우가 버린 메시지를 기존 요약에 접어 갱신 요약을 만든다 (summarize-then-drop).
-
-    best-effort: 요약 콜이 어떤 이유로든 실패하면 ``prior_summary`` 를 그대로 돌려준다
-    (graceful degrade — content_sync 와 동일 철학). 턴은 막지 않는다.
-
-    Args:
-        provider: 현재 세션 LLM provider (요약도 같은 모델로).
-        prior_summary: 직전까지 누적된 롤링 요약. 없으면 None.
-        dropped: 이번 트림에서 버려진 메시지(시간순, tool 은 절단본).
-
-    Returns:
-        갱신된 요약 문자열. 잘린 내용이 비었거나 실패 시 ``prior_summary``.
-    """
-    rendered = "\n".join(
-        f"[{m.role}] {m.content}".strip() for m in dropped if m.content
-    )
-    if not rendered:
-        return prior_summary
-
-    payload = (
-        f"## 기존 요약\n{prior_summary or '(없음)'}\n\n## 새로 잘린 대화\n{rendered}"
-    )
-    messages = [
-        Message(role="system", content=_COMPACTION_SYSTEM_PROMPT),
-        Message(role="user", content=payload),
-    ]
-    try:
-        buffer: list[str] = []
-        async for event in provider.astream(messages, []):
-            if event.type == "delta":
-                buffer.append(event.content)
-            elif event.type == "done":
-                break
-        summary = "".join(buffer).strip()
-        return summary[:_COMPACTION_MAX_CHARS] if summary else prior_summary
-    except Exception:  # noqa: BLE001 — best-effort, 실패해도 직전 요약 유지
-        logger.warning("history compaction failed — keeping prior summary")
-        return prior_summary
-
-
-def _maybe_inject_wind_down(
-    ctx: TurnContext, iteration: int, already_notified: bool
-) -> bool:
-    """남은 호출 여유가 임계 이하면 [System] 마무리 지시문을 messages 에 1회 주입한다 (R7).
-
-    진행은 성공 중인데 예산(반복 상한·turn budget)만 소진돼 사용자 노출 단계(display_*)가
-    잘리는 시나리오를 방지한다. 히스토리에는 영속하지 않는다 (messages 한정).
-
-    Returns:
-        갱신된 notified 플래그 — 한 번 주입되면 이후 iteration 에서 재주입하지 않는다.
-    """
-    if already_notified:
-        return True
-    remaining_calls = min(
-        ctx.max_iterations - iteration, ctx.budget.max_calls - ctx.budget.used
-    )
-    if not 0 < remaining_calls <= WIND_DOWN_REMAINING_CALLS:
-        return False
-    ctx.messages.append(
-        Message(role="user", content=_build_wind_down_message(remaining_calls))
-    )
-    trace.record("wind_down", remaining_calls=remaining_calls)
-    logger.info(
-        "agent %s wind-down notified (remaining_calls=%d)",
-        ctx.agent_id,
-        remaining_calls,
-    )
-    return True
-
-
-async def _emit_max_iterations_fallback(
-    ctx: TurnContext,
-) -> AsyncIterator[StreamEvent]:
-    """반복 상한 소진 시 도구 없는 최종 요약 라운드를 돌린다 (F6).
-
-    모든 todo 가 terminal 이면 '복구'(작업 완료·예산 소진)로 판정해 초록 점선,
-    아니면 '미완료'로 빨강 점선으로 프론트가 스타일링하도록 is_recovered 플래그를 싣는다.
-    """
-    is_recovered = (
-        ctx.state is not None
-        and bool(ctx.state.todo_list)
-        and _all_todos_terminal(ctx.state)
-    )
-    if is_recovered:
-        msg = (
-            f"[max_iterations] {ctx.agent_id}: 반복 상한({ctx.max_iterations}회)에 "
-            "도달했으나 모든 작업이 완료 상태입니다."
-        )
-    else:
-        msg = (
-            f"[max_iterations] {ctx.agent_id}: {ctx.max_iterations}회 반복 상한에 "
-            "도달했습니다. 작업이 완전히 완료되지 않았을 수 있습니다."
-        )
-    trace.record(
-        "max_iter_fallback",
-        max_iterations=ctx.max_iterations,
-        is_recovered=is_recovered,
-    )
-    logger.warning(
-        "agent harness reached max_iterations=%d (agent=%s, recovered=%s)",
-        ctx.max_iterations,
-        ctx.agent_id,
-        is_recovered,
-    )
-    ctx.messages.append(
-        Message(role="user", content=MAX_ITERATIONS_FALLBACK_INSTRUCTION)
-    )
-
-    buffer: list[str] = []
-    async for event in ctx.provider.astream(ctx.messages, []):
-        if event.type == "delta":
-            buffer.append(event.content)
-            yield event
-        elif event.type == "done":
-            break
-
-    assistant_text = "".join(buffer)
-    if assistant_text:
-        fallback_response = Message(role="assistant", content=assistant_text)
-        ctx.messages.append(fallback_response)
-        if ctx.turn_messages is not None:
-            ctx.turn_messages.append(fallback_response)
-        # 자연어 응답이 생성됐으므로 ErrorEvent 는 프론트에 노출하지 않는다.
-        # is_fallback=True 플래그만 보내 UI 가 마지막 메시지를 스타일링하도록 신호.
-        yield ErrorEvent(message=msg, is_fallback=True, is_recovered=is_recovered)
-    else:
-        # fallback LLM 호출 자체가 실패한 경우 — 일반 에러로 노출.
-        yield ErrorEvent(message=msg)

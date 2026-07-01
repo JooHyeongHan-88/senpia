@@ -20,14 +20,16 @@
 
 | 파일/폴더 | 책임 | 문서 |
 |---|---|---|
-| `loop.py` | 진입점 `run_turn` + 공통 provider→tool 루프 `_run_agent_turn` + 생애주기 헬퍼(wind-down·fallback·실패 영속) | [turn-loop.md](turn-loop.md) |
+| `loop.py` | 진입점 `run_turn` + 공통 provider→tool 루프 `_run_agent_turn` (루프 골격) | [turn-loop.md](turn-loop.md) |
+| `lifecycle.py` | `_run_agent_turn` 생애주기 헬퍼 — 예산 임박 wind-down 주입(R7) + 반복 상한 fallback(F6) | [turn-loop.md](turn-loop.md) |
+| `compaction.py` | summarize-then-drop 롤링 히스토리 요약(R10) — `_compact_history` | [turn-loop.md](turn-loop.md) |
 | `call_handlers.py` | tool_call **단건 3단계 파이프라인** + sentinel 디스패치 테이블 + 공유 가드 | [call-handlers.md](call-handlers.md) |
 | `budget.py` | `TurnBudget` — 턴 호출 상한 + 같은-에이전트-연속-호출 가드 | [turn-loop.md](turn-loop.md#turnbudget) |
 | `tool_exec.py` | `_execute_tool`(timeout·표준화) + `_append_tool_result` | [turn-loop.md](turn-loop.md#도구-실행) |
 | `constants.py` | 루프 차원 상수(`ORCHESTRATOR_ID`·`WIND_DOWN_REMAINING_CALLS`·fallback 지시문) | [turn-loop.md](turn-loop.md) |
-| `dispatch/` | 서브 에이전트 위임 — 순차·병렬·스펙 선별·결과 포맷 | [dispatch.md](dispatch.md) |
-| `prompt/` | system prompt 조립 — 오케스트레이터/서브/단층·섹션·산출물·api_refs·wind-down | [prompt.md](prompt.md) |
-| `state/` | 상태 변형 — todo·히스토리 정합성·루프가드·pending 클리어 | [state.md](state.md) |
+| `dispatch/` | 서브 에이전트 위임 + 도구 스펙 선별(오케스트레이터·서브) — 순차·병렬·spec_filter·결과 포맷 | [dispatch.md](dispatch.md) |
+| `prompt/` | system prompt 조립 — 오케스트레이터/서브/단층·섹션·산출물·api_refs·wind-down 지시문·composer 클로저 | [prompt.md](prompt.md) |
+| `state/` | 상태 변형 — todo·히스토리 정합성·루프가드·pending 클리어·실패 턴 영속 | [state.md](state.md) |
 | `__init__.py` | 공개 API(`run_turn`/`TurnBudget`/`ORCHESTRATOR_ID`) + 하위호환 re-export | — |
 
 > `from agent.harness import run_turn` 경로는 분해 이후에도 불변이다(`__init__.py` re-export).

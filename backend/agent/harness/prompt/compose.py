@@ -8,8 +8,11 @@ system prompt 를 만든다:
 - 단층 fallback(AGENTS 부재): ``_compose_system_prompt``
 """
 
+from collections.abc import Callable
+
 from agent.models import AgentState
 from agent.registries.agents import Agent, AgentRegistry
+from agent.registries.prompts import PromptRegistry
 from agent.registries.skills import Skill, SkillRegistry
 
 from agent.harness.prompt.api_refs import (
@@ -221,3 +224,56 @@ def _compose_system_prompt(
             parts.append("\n" + api_section)
 
     return "\n".join(parts)
+
+
+def _make_system_prompt_composer(
+    *,
+    has_agents: bool,
+    prompt_registry: PromptRegistry,
+    agent_registry: AgentRegistry | None,
+    skill_registry: SkillRegistry,
+    state: AgentState,
+    user_prompt_section: str,
+    baseline_api_refs: list[str] | None = None,
+) -> Callable[[list[Skill]], str]:
+    """activate_skill 시 system prompt 를 동적 재조립하는 클로저를 만든다.
+
+    base prompt 와 state 는 이번 턴 시점 확정값이라 클로저에 캡처해도 안전하다.
+    has_agents 면 오케스트레이터(AGENTS 카탈로그 포함) prompt, 아니면 하위호환
+    단층 prompt(orchestrator.md 제외)를 합성한다.
+
+    Args:
+        has_agents: AGENTS 카탈로그 보유 여부 — 오케스트레이터/단층 분기.
+        user_prompt_section: SettingsModal 사용자 지침 (base 뒤에 덧붙음, 빈 문자열 가능).
+        baseline_api_refs: 오케스트레이터 baseline api_refs — 두 경로 모두에 전달돼
+            활성 SKILL 과 무관하게 라이브러리 API 섹션을 상시 노출한다.
+
+    Returns:
+        활성 SKILL 목록을 받아 완성된 system prompt 문자열을 돌려주는 클로저.
+    """
+    refs = baseline_api_refs or []
+    if has_agents:
+        base = prompt_registry.compose(include_orchestrator=True) + user_prompt_section
+
+        def recompose(updated_skills: list[Skill]) -> str:
+            return _compose_orchestrator_system_prompt(
+                base=base,
+                skills=updated_skills,
+                state=state,
+                agent_registry=agent_registry,  # type: ignore[arg-type]
+                skill_registry=skill_registry,
+                baseline_api_refs=refs,
+            )
+    else:
+        base = prompt_registry.compose(include_orchestrator=False) + user_prompt_section
+
+        def recompose(updated_skills: list[Skill]) -> str:
+            return _compose_system_prompt(
+                base,
+                updated_skills,
+                state,
+                skill_registry,
+                baseline_api_refs=refs,
+            )
+
+    return recompose

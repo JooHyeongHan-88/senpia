@@ -1,7 +1,8 @@
 # 상태 변형 — `state/`
 
-`AgentState` 를 직접 조작하는 네 모듈. `loop`·`call_handlers` 양쪽에서 공유되므로
-단방향 의존으로 분리됐다(`state/` 는 상위 모듈을 import 하지 않음 — 순환 없음).
+`AgentState` 를 직접 조작하는 다섯 모듈. `loop`·`call_handlers` 양쪽에서 공유되므로
+단방향 의존으로 분리됐다(`state/` 는 `loop`/`call_handlers` 등 상위 모듈을 import 하지
+않음 — 순환 없음). `persistence.py` 만 스토어(하위 계층)와 `state/` 형제를 추가로 import 한다.
 
 | 모듈 | 역할 |
 |---|---|
@@ -9,6 +10,7 @@
 | `balancing.py` | 미해결 tool_call 에 placeholder 를 채워 OpenAI 와이어 규약 준수 (F1b·R1) |
 | `loop_guard.py` | 호출 시그니처 fingerprint 기반 동일 호출 반복 감지 (R4) |
 | `pending.py` | 턴 경계 pending 잔재 클리어 (F11) |
+| `persistence.py` | run_turn 예외 경로 best-effort 턴 영속 (R1) — `_persist_failed_turn` |
 
 ---
 
@@ -171,3 +173,27 @@ system prompt 가 stale pending 으로 오염되지 않게 한다.
 |---|---|
 | `run_turn` 마무리 (F11) | AskUser 없이 턴 정상 완료 |
 | `_persist_failed_turn` (R1) | 최상위 예외 경로 — best-effort 영속 직전 |
+
+---
+
+## 실패 턴 영속 — `persistence.py` (R1)
+
+`run_turn` 최상위 `except Exception` 이 호출하는 best-effort 영속. 실패한 턴도 사용자
+메시지까지 보존해야 다음 턴 LLM 컨텍스트가 끊기지 않는다.
+
+### `_persist_failed_turn(*, client_id, turn_messages, state, store, state_store, turn_persisted)`
+
+1. `clear_all_pending(state)` — mid-mutation pending 잔재 제거 (F11 과 동일 정책).
+2. `turn_persisted` 가 False 일 때만 `_balance_all_unresolved(turn_messages)`(미해결
+   tool_call 쌍 보정, OpenAI 400 방지) 후 `store.append`. **성공 경로가 이미 append 를
+   끝냈으면(True) 재-append 하지 않는다** — append 성공 ↔ state flush 실패 사이 좁은 창의
+   중복 영속 방지.
+3. `state_store.set(client_id, state)`.
+
+영속 자체가 또 실패해도 `logger.exception` 만 남기고 삼킨다 — 호출부의 에러 알림
+(ErrorEvent/DoneEvent) 송출을 막으면 안 되기 때문. ESC/disconnect 의 `CancelledError` 는
+`BaseException` 이라 이 경로를 타지 않는다(중단 턴은 백엔드에 미영속 — 의도된 동작).
+
+> 영속 협력자(`_balance_all_unresolved`·`clear_all_pending`)와 같은 `state/` 서브패키지에
+> 두어 응집도를 높인다. 스토어(`ConversationStore`·`AgentStateStore`)는 하위 계층이라
+> import 해도 순환이 생기지 않는다.

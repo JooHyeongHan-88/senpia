@@ -5,7 +5,7 @@
 
 | 모듈 | 역할 |
 |---|---|
-| `compose.py` | 세 경로의 최종 조립 (`_compose_orchestrator_system_prompt`·`_compose_sub_agent_system_prompt`·`_compose_system_prompt`) |
+| `compose.py` | 세 경로의 최종 조립 (`_compose_orchestrator_system_prompt`·`_compose_sub_agent_system_prompt`·`_compose_system_prompt`) + activate_skill 동적 재조립 클로저 팩토리 `_make_system_prompt_composer` |
 | `sections.py` | 공통 섹션 렌더러 (비활성 SKILL 카탈로그·멀티스킬·To-do·Pending Slot) — 모두 `str \| None` 순수 함수 |
 | `artifacts.py` | `_render_session_artifacts_section` — 세션 manifest 기반 과거 산출물 목록 |
 | `api_refs.py` | `_render_skills_api_refs`·`_collect_agent_api_refs_section` — api_refs → ApiDoc 섹션 |
@@ -80,5 +80,6 @@ ApiDoc 섹션으로 렌더한다. `_render_skills_api_refs`(활성 SKILL 들) ·
 
 `_build_wind_down_message(remaining_calls)` 가 남은 호출 수에 따라 마무리 지시문을
 생성한다(R7). 잔여 2+ 면 "새 분석 금지·저장된 산출물 즉시 표시·다음 응답은 도구 없이
-요약", 잔여 1 이면 "도구 호출 금지·최종 답변 작성". `loop._maybe_inject_wind_down` 이
-`messages` 에만 1회 주입한다(→ [turn-loop.md](turn-loop.md)).
+요약", 잔여 1 이면 "도구 호출 금지·최종 답변 작성". 이 모듈은 **순수 문자열 빌더**만
+보유한다 — 실제 주입은 `lifecycle._maybe_inject_wind_down` 이 `messages` 에만 1회
+수행한다(→ [turn-loop.md](turn-loop.md)).

@@ -115,8 +115,8 @@ pwsh packaging/release.ps1 -Channel prod -Upload     # Prod 빌드 + 릴리즈
 | 파일 | 내용 |
 |---|---|
 | `harness/README.md` | 턴 생애주기 다이어그램 · 모듈 맵 · 중복방지 안내 |
-| `harness/turn-loop.md` | `loop.py` — run_turn · _run_agent_turn · budget · tool_exec · wind-down(R7)/fallback(F6) |
+| `harness/turn-loop.md` | `loop.py`·`lifecycle.py`·`compaction.py` — run_turn · _run_agent_turn · budget · tool_exec · wind-down(R7)/fallback(F6) · 히스토리 압축(R10) |
 | `harness/call-handlers.md` | `call_handlers.py` — 3단계 파이프라인 · sentinel 라우트 · 가드(`activate_skill` 포함) |
 | `harness/dispatch.md` | `dispatch/` — 순차·병렬(dispatch_id·semaphore) · spec_filter(4중 차단) · result_format |
 | `harness/prompt.md` | `prompt/` — compose · sections · artifacts · api_refs · wind_down |
-| `harness/state.md` | `state/` — todo · balancing · loop_guard · pending |
+| `harness/state.md` | `state/` — todo · balancing · loop_guard · pending · persistence(실패 턴 영속) |

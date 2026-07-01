@@ -9,6 +9,7 @@ from agent.models import ToolSpec
 from agent.registries.agents import Agent
 from agent.registries.skills import Skill, SkillRegistry
 from agent.registries.tools import (
+    COMPLETE_SUB_AGENT,
     SUB_AGENT_DISPATCH,
     SUB_AGENTS_PARALLEL_DISPATCH,
     ToolRegistry,
@@ -41,6 +42,31 @@ def _inject_runtime_tools(
             ToolSpec(name=rt.name, description=rt.description, parameters=rt.parameters)
         )
     return specs + extra
+
+
+def _build_orchestrator_specs(
+    registry: ToolRegistry, skills: list[Skill], *, has_agents: bool
+) -> list[ToolSpec]:
+    """오케스트레이터 provider 에 노출할 도구 스펙을 선별한다.
+
+    COMPLETE_SUB_AGENT 는 서브 에이전트 전용이라 숨기고, AGENTS 가 없으면 위임
+    도구(순차·병렬)도 제거한다. infrastructure 메타 도구(call_function 등)는
+    registry.specs() 에 항상 포함되므로 오케스트레이터에는 이미 노출돼 있다 —
+    `_inject_runtime_tools` 는 누락분 보강용 idempotent 안전망이다(서브 에이전트는
+    화이트리스트로 걸러지므로 거기서 실효). 따라서 오케스트레이터에서 baseline
+    api_refs 가 추가로 필요로 하는 것은 도구가 아니라 prompt 의 docstring 섹션뿐이다
+    (compose 가 담당). 도구 노출은 손대지 않는다.
+    """
+    delegation_tools = {SUB_AGENT_DISPATCH, SUB_AGENTS_PARALLEL_DISPATCH}
+    specs = [
+        s
+        for s in registry.specs()
+        if s.name != COMPLETE_SUB_AGENT
+        and (has_agents or s.name not in delegation_tools)
+    ]
+    if _skills_require_runtime_tools(skills):
+        specs = _inject_runtime_tools(specs, registry)
+    return specs
 
 
 def _resolve_agent_skills(agent: Agent, skill_registry: SkillRegistry) -> list[Skill]:

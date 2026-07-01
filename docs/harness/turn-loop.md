@@ -1,7 +1,14 @@
-# 턴 루프 — `loop.py` · `budget.py` · `tool_exec.py` · `constants.py`
+# 턴 루프 — `loop.py` · `lifecycle.py` · `compaction.py` · `budget.py` · `tool_exec.py` · `constants.py`
 
 하니스의 코어 머신. **진입점(`run_turn`)** 과 **공통 provider→tool 루프(`_run_agent_turn`)**,
-그리고 그 둘을 떠받치는 호출 예산·도구 실행·루프 상수가 여기 모여 있다.
+그리고 그 둘을 떠받치는 생애주기 헬퍼(wind-down·fallback)·히스토리 압축·호출 예산·
+도구 실행·루프 상수가 여기 모여 있다.
+
+> `run_turn`/`_run_agent_turn` 만 `loop.py` 에 남기고, 준비·생애주기 헬퍼는 의미별
+> 형제 모듈로 분리됐다 — prompt 조립 클로저 `_make_system_prompt_composer`(`prompt/compose.py`),
+> 도구 스펙 선별 `_build_orchestrator_specs`(`dispatch/spec_filter.py`), 실패 턴 영속
+> `_persist_failed_turn`(`state/persistence.py`), wind-down·fallback(`lifecycle.py`),
+> 히스토리 압축(`compaction.py`). 본 문서는 그 호출 흐름을 기준으로 설명한다.
 
 ---
 
@@ -27,7 +34,7 @@ force_skills=None, session_title="", user_prompt="")` → `AsyncIterator[StreamE
 성공 경로 append 직후 state flush 가 실패하는 좁은 창에서 except 가 재-append 해
 턴이 중복 영속되는 것을 막는다.
 
-### `_make_system_prompt_composer`
+### `_make_system_prompt_composer` (코드: `prompt/compose.py`)
 
 `has_agents` 여부로 분기해 base prompt(±`orchestrator.md`)를 한 번 만들고, 활성 SKILL
 목록을 받아 완성된 system prompt 를 돌려주는 클로저를 반환한다. base 와 state 는 이번
@@ -35,20 +42,29 @@ force_skills=None, session_title="", user_prompt="")` → `AsyncIterator[StreamE
 `_compose_orchestrator_system_prompt`, 아니면 단층 `_compose_system_prompt` 를 부른다
 (→ [prompt.md](prompt.md)). 사용자가 SettingsModal 에 적은 추가 지침은 base 뒤에 한 번 덧붙는다.
 
-### `_build_orchestrator_specs`
+### `_build_orchestrator_specs` (코드: `dispatch/spec_filter.py`)
 
 `COMPLETE_SUB_AGENT`(서브 전용)는 항상 숨기고, AGENTS 가 없으면 위임 도구
 (`call_sub_agent`·`call_sub_agents_parallel`)도 제거한다. 활성 SKILL 중 하나라도
 `api_refs` 를 가지면 `_inject_runtime_tools` 로 인프라 메타 도구를 자동 주입한다
 (SKILL 본문에 명시하지 않아도 LLM 이 자체 plan 에 쓰게 함).
 
-### `_persist_failed_turn` (R1)
+### `_persist_failed_turn` (R1 — 코드: `state/persistence.py`)
 
 최상위 `except Exception` 의 best-effort 영속. 실패한 턴도 사용자 메시지까지 보존해야
 다음 턴 컨텍스트가 끊기지 않는다. `clear_all_pending` → (미persist 면)
 `_balance_all_unresolved`(미해결 tool_call 쌍 보정, OpenAI 400 방지) + `store.append` →
 `state_store.set`. 영속 자체가 또 실패해도 로그만 남기고 ErrorEvent/DoneEvent 송출은
 막지 않는다. 에러 메시지는 `f"[{type(exc).__name__}] 처리 중 오류..."` 로 안전화(F12 — 키·URL 노출 방지).
+영속 협력자(`state/balancing.py`·`state/pending.py`)와 같은 `state/` 서브패키지에 둔다.
+
+### 히스토리 압축 `_compact_history` (R10 — 코드: `compaction.py`)
+
+happy path 에서 `store.append` 가 슬라이딩 윈도우(`MAX_HISTORY_MESSAGES`) 초과로 버린
+메시지를 반환하면, `run_turn` 이 `COMPACTION_ENABLED` 일 때 이를 기존 요약에 접어
+`state.progress_summary` 로 보존한다(망각 방지, summarize-then-drop). best-effort —
+요약 콜 실패 시 직전 요약 유지. 예외 경로(`_persist_failed_turn`)엔 LLM 콜을 추가하지
+않는다. 상세는 [.claude/rules/harness_resilience.md](../../.claude/rules/harness_resilience.md) R10.
 
 ---
 
@@ -84,7 +100,11 @@ else:  # 반복 상한 소진
   _emit_max_iterations_fallback (F6)
 ```
 
-### 생애주기 헬퍼
+### 생애주기 헬퍼 (코드: `lifecycle.py`)
+
+`_run_agent_turn` 전용. 두 함수 모두 `ctx.messages` 를 변형하거나 `provider.astream` 을
+호출하고 `StreamEvent` 를 yield 하므로 — `prompt/` 의 '순수 문자열 함수' 불변식과 달라 —
+프롬프트 조립 서브패키지가 아니라 별도 `lifecycle.py` 에 둔다.
 
 - **`_maybe_inject_wind_down` (R7)** — `remaining_calls = min(반복 잔여, budget 잔여)` 가
   `WIND_DOWN_REMAINING_CALLS`(2) 이하로 떨어지는 시점에 `_build_wind_down_message` 의
